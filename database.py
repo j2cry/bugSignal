@@ -1,14 +1,8 @@
-import datetime as dt
 import logging
-import pytz
 import sqlalchemy as sa
 import sqlalchemy.orm as orm
 import typing
 # from contextlib import contextmanager
-from functools import wraps
-from telegram import Chat, User
-from telegram.constants import ChatType
-
 from model import UserRole, ListenerTable, ChatTable, SubscriptionTable, AnyTable, definitions_loader
 
 

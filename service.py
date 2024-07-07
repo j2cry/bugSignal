@@ -1,35 +1,36 @@
 from __future__ import annotations
-import json
 import logging
 import math
 import os
-import typing as t
 from contextlib import contextmanager
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ChatType
 from telegram.error import BadRequest
+from typing import Any, Callable, Concatenate, Coroutine, Unpack
 
 from database import Database
 from defaults import LogRecord
 from model import (
     UserRole,
     Action,
-    CallbackData,
+    CallbackKey,
+    CallbackContent,
+    CallbackProtocol,
     Emoji,
-    UD, CD, BT,
-    CCT,
-    CT,
+    UD, CD, BD, BT, CCT, CT,
+    ValidatedContext
 )
 
 
-def button(name: str, **kwargs) -> InlineKeyboardButton:
-    serialized = json.dumps({CallbackData[k.upper()]: v for k, v in kwargs.items()}).replace(' ', '')
-    return InlineKeyboardButton(name, callback_data=serialized)
+def button(name: str, data: CallbackProtocol, **kwargs: Unpack[CallbackContent]) -> InlineKeyboardButton:
+    hashkey = str(hash(str(kwargs)))
+    data[hashkey] = kwargs
+    return InlineKeyboardButton(name, callback_data=hashkey)
 
 
-# def logcommand[S: BugSignalService, T](method: t.Callable[[S, Update, CCT], t.Coroutine[t.Any, t.Any, T]]):
+# def logcommand[S: BugSignalService, T](method: Callable[[S, Update, CCT], Coroutine[Any, Any, T]]):
 #     """ Decorator for command logging """
-#     def _wrapper(self: S, update: Update, context: CCT) -> t.Coroutine[t.Any, t.Any, T]:
+#     def _wrapper(self: S, update: Update, context: CCT) -> Coroutine[Any, Any, T]:
 #         # user_id = (update.effective_user or User(-1, 'Unknown', False)).id
 #         # chat_id = (update.effective_chat or Chat(-1, 'PRIVATE')).id
 #         variables = (
@@ -43,6 +44,51 @@ def button(name: str, **kwargs) -> InlineKeyboardButton:
 #     return _wrapper
 
 
+def checkvars[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
+    """ Decorator for checking general variables """
+    def _wrapper(self: S,
+                 update: Update,
+                 context: CCT,
+                 *args: KW.args,
+                 **kwargs: KW.kwargs
+                 ) -> Coroutine[Any, Any, T]:
+        assert (user := update.effective_user) is not None, LogRecord('CHECKVARS', 'user').EFFECTIVE_IS_NONE
+        assert (chat := update.effective_chat) is not None, LogRecord('CHECKVARS', 'chat').EFFECTIVE_IS_NONE
+        assert (message := update.effective_message) is not None, LogRecord('CHECKVARS', 'message').EFFECTIVE_IS_NONE
+        assert (user_data := context.user_data) is not None, LogRecord('CHECKVARS', 'User').DATA_IS_NONE
+        assert (chat_data := context.chat_data) is not None, LogRecord('CHECKVARS', 'Chat').DATA_IS_NONE
+        assert (bot_data := context.bot_data) is not None, LogRecord('CHECKVARS', 'Bot').DATA_IS_NONE
+        kwargs.update(
+            user=user,
+            chat=chat,
+            message=message,
+            user_data=user_data,
+            chat_data=chat_data,
+            bot_data=bot_data,
+        )
+        return method(self, update, context, *args, **kwargs)
+    return _wrapper
+
+
+def permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
+    """ Decorator for checking permissions """
+    async def _empty_handler(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T: ...
+    async def _wrapper(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T:
+        assert (user := update.effective_user) is not None, LogRecord('PERMISSON', 'user').EFFECTIVE_IS_NONE
+        assert (chat := update.effective_chat) is not None, LogRecord('PERMISSON', 'chat').EFFECTIVE_IS_NONE
+        assert (message := update.effective_message) is not None, LogRecord('PERMISSION', 'message').EFFECTIVE_IS_NONE
+        if chat.type != ChatType.PRIVATE:
+            for admin in await chat.get_administrators():
+                if admin.user == update.effective_user:
+                    break
+            else:
+                if (callback_query := update.callback_query) is not None:
+                    await callback_query.answer('jap-jap-jap')
+                self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
+                await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
+                return await _empty_handler(self, update, context, *args, **kwargs)
+        return await method(self, update, context, *args, **kwargs)
+    return _wrapper
 
 
 class BugSignalService:
@@ -59,51 +105,50 @@ class BugSignalService:
         yield self
         self.db.dispose()
 
-    async def start(self, update: Update, context: CCT):
+    @checkvars
+    async def start(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Remember chat id """
-        assert (chat := update.effective_chat) is not None, LogRecord('START', 'chat').EFFECTIVE_IS_NONE
-        assert (message := update.effective_message) is not None, LogRecord('MENU', 'message').EFFECTIVE_IS_NONE
-        self.db.set_chat(chat.id, title=chat.effective_name or str(chat.id), type=chat.type)
-        await message.reply_text(f'{Emoji.ENABLED} Current chat information saved.')  # NOTE hardcoded message
+        self.db.set_chat(kwargs['chat'].id,
+                         title=kwargs['chat'].effective_name or str(kwargs['chat'].id),
+                         type=kwargs['chat'].type)
+        await kwargs['message'].reply_text(f'{Emoji.ENABLED} Current chat information saved.')  # NOTE hardcoded message
 
-    # TODO user role checking decorator: or make it dynamically?
-    async def menu(self, update: Update, context: CCT):
+    @checkvars
+    @permission_check
+    async def menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Show menu """
-        assert (chat := update.effective_chat) is not None, LogRecord('MENU', 'chat').EFFECTIVE_IS_NONE
-        assert (user := update.effective_user) is not None, LogRecord('MENU', 'user').EFFECTIVE_IS_NONE
-        assert (message := update.effective_message) is not None, LogRecord('MENU', 'message').EFFECTIVE_IS_NONE
-        # discard opening menu
-        if chat.type != ChatType.PRIVATE:
-            self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
-            await message.reply_text(f'{Emoji.DECLINED} Opening menu is allowed only in private chat.')    # NOTE hardcoded message
-            return
+        chat = kwargs['chat']
+        message = kwargs['message']
+        chat_data = kwargs['chat_data']
         # build menu
+        callback = {}
         menu = InlineKeyboardMarkup(((
-            button('Chats', action=Action.CHATS),
-            button('Listeners', action=Action.LISTENERS),
+            button('Chats', callback, action=Action.CHATS),
+            button('Listeners', callback, action=Action.LISTENERS),
         ), (
-            button('Subscriptions', action=Action.SUBSCRIPTIONS),
+            button('Subscriptions', callback, action=Action.SUBSCRIPTIONS),
         ), (
-            button('Close', action=Action.CLOSE),
+            button('Close', callback, action=Action.CLOSE),
         ),))
+        chat_data['callback'] = callback
         try:
             await message.edit_text('bugSignal admin panel', reply_markup=menu)
         except BadRequest:
             await context.bot.send_message(chat.id, 'bugSignal admin panel', reply_markup=menu)
 
-    async def callback(self, update: Update, context: CCT):
+    @checkvars
+    @permission_check
+    async def callback(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Parse callback data """
-        assert (user := update.effective_user) is not None, LogRecord('CALLBACK', 'user').EFFECTIVE_IS_NONE
-        assert (message := update.effective_message) is not None, LogRecord('CALLBACK', 'message').EFFECTIVE_IS_NONE
-        assert update.callback_query is not None, LogRecord.CALLBACK_IS_NONE
-        assert (chat_data := context.chat_data) is not None, LogRecord('CALLBACK', 'Chat').DATA_IS_NONE
-        await update.callback_query.answer('jap-jap-jap')
-        # deserialize
-        data = {int(k): v for k, v in json.loads(update.callback_query.data or '{}').items()}
+        assert (callback_query := update.callback_query) is not None, LogRecord.CALLBACK_IS_NONE
+        await callback_query.answer('jap-jap-jap')
+        chat_data = kwargs['chat_data']
+        # get callback saved data
+        data = chat_data.get('callback', {}).get(callback_query.data)
         match data:
-            case {CallbackData.ACTION: Action.MENU}:
-                return await self.menu(update, context)
-            case {CallbackData.ACTION: Action.CHATS}:
+            case {CallbackKey.ACTION: Action.MENU}:
+                return await self.menu(update, context, **kwargs)
+            case {CallbackKey.ACTION: Action.CHATS}:
                 # Show Chats list
                 chat_data.update(
                     back=Action.MENU,
@@ -113,7 +158,7 @@ class BugSignalService:
                     action=Action.SWITCH,
                     page=0,
                 )
-            case {CallbackData.ACTION: Action.LISTENERS, CallbackData.CHAT_ID: int(chat_id)}:
+            case {CallbackKey.ACTION: Action.LISTENERS, CallbackKey.CHAT_ID: int(chat_id)}:
                 # show listeners' subscriptions for specified chat
                 title, subscriptions = self.db.subscriptions(chat_id)
                 chat_data.update(
@@ -124,7 +169,7 @@ class BugSignalService:
                     action=Action.SWITCH,
                     page=0,
                 )
-            case {CallbackData.ACTION: Action.LISTENERS}:
+            case {CallbackKey.ACTION: Action.LISTENERS}:
                 # show Listeners list
                 chat_data.update(
                     back=Action.MENU,
@@ -134,7 +179,7 @@ class BugSignalService:
                     action=Action.SWITCH,
                     page=0,
                 )
-            case {CallbackData.ACTION: Action.SUBSCRIPTIONS}:
+            case {CallbackKey.ACTION: Action.SUBSCRIPTIONS}:
                 # show Subscriptions list
                 chat_data.update(
                     back=Action.MENU,
@@ -145,46 +190,46 @@ class BugSignalService:
                     page=0,
                 )
             # Update active state
-            case {CallbackData.ACTION: Action.SWITCH,
-                  CallbackData.CHAT_ID: int(chat_id),
-                  CallbackData.LISTENER_ID: int(listener_id),
-                  CallbackData.ACTIVE: bool() | None as active,
+            case {CallbackKey.ACTION: Action.SWITCH,
+                  CallbackKey.CHAT_ID: int(chat_id),
+                  CallbackKey.LISTENER_ID: int(listener_id),
+                  CallbackKey.ACTIVE: bool() | None as active,
                   }:
                 # insert/update Subscription
                 self.logger.debug('Insert/update SUBSCRIPTION')
                 self.db.set_subscription(chat_id, listener_id, active=not active)
                 _, chat_data['menulist'] = self.db.subscriptions(chat_id)
-            case {CallbackData.ACTION: Action.SWITCH,
-                  CallbackData.CHAT_ID: int(chat_id),
-                  CallbackData.ACTIVE: bool(active)}:
+            case {CallbackKey.ACTION: Action.SWITCH,
+                  CallbackKey.CHAT_ID: int(chat_id),
+                  CallbackKey.ACTIVE: bool(active)}:
                 # update Chat activity
                 self.logger.debug('Enable/disable CHAT')
                 self.db.set_chat(chat_id, active=not active)
                 chat_data['menulist'] = self.db.chats()
-            case {CallbackData.ACTION: Action.SWITCH,
-                  CallbackData.LISTENER_ID: int(listener_id),
-                  CallbackData.ACTIVE: bool(active)}:
+            case {CallbackKey.ACTION: Action.SWITCH,
+                  CallbackKey.LISTENER_ID: int(listener_id),
+                  CallbackKey.ACTIVE: bool(active)}:
                 # update Chat activity
                 self.logger.debug('Enable/disable LISTENER')
                 self.db.set_listener(listener_id, active=not active)
                 chat_data['menulist'] = self.db.listeners()
             # basic menu commands
-            case {CallbackData.ACTION: Action.PREVPAGE}:
+            case {CallbackKey.ACTION: Action.PREVPAGE}:
                 chat_data['page'] -= 1
-            case {CallbackData.ACTION: Action.NEXTPAGE}:
+            case {CallbackKey.ACTION: Action.NEXTPAGE}:
                 chat_data['page'] += 1
-            case {CallbackData.ACTION: Action.CLOSE}:
-                return await self.menuclose(update, context)
+            case {CallbackKey.ACTION: Action.CLOSE}:
+                return await self.__menuclose(update, context, **kwargs)
             case _:
-                await message.edit_text('Something is wrong...', reply_markup=None)
+                await kwargs['message'].edit_text('Something is wrong...', reply_markup=None)
                 self.__drop_context(context, CD)
                 return
-        await self.menupage(update, context)
+        await self.__menupage(update, context, **kwargs)
 
-    async def menupage(self, update: Update, context: CCT):
+    async def __menupage(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Build next menu page """
-        assert (chat_data := context.chat_data) is not None, LogRecord('MENUPAGE', 'Chat').DATA_IS_NONE
-        assert (message := update.effective_message) is not None, LogRecord('CALLBACK', 'message').EFFECTIVE_IS_NONE
+        chat_data = kwargs['chat_data']
+        message = kwargs['message']
         # check page overflow
         ITEMS_PER_PAGE = 4
         max_pages = math.ceil(len(chat_data['menulist']) / ITEMS_PER_PAGE)
@@ -196,46 +241,53 @@ class BugSignalService:
         start = chat_data['page'] * ITEMS_PER_PAGE
         end = (chat_data['page'] + 1) * ITEMS_PER_PAGE
         buttons = []
+        callback = {}
         for item in chat_data['menulist'][start:end]:
-            data = dict(action=chat_data['action'])
+            # data: CallbackContent = dict(action=chat_data['action'])
+            data = CallbackContent(action=chat_data['action'])
             if chat_data.get('marker'):
-                data['active'] = item.active
+                data[CallbackKey.ACTIVE.value] = item.active
                 mark = (Emoji.ENABLED if getattr(item, 'active', False) else Emoji.DISABLED)
             else:
                 mark = ''
-            if 'chat_id' in item._fields:
-                data['chat_id'] = item.chat_id
-            if 'listener_id' in item._fields:
-                data['listener_id'] = item.listener_id
-            buttons.append([button(f'{mark}{item.title}', **data)])
+            if CallbackKey.CHAT_ID in item._fields:
+                data[CallbackKey.CHAT_ID.value] = item.chat_id
+            if CallbackKey.LISTENER_ID in item._fields:
+                data[CallbackKey.LISTENER_ID.value] = item.listener_id
+            buttons.append([button(f'{mark}{item.title}', callback, **data)])
         buttons.extend((
-            (button('<<', action=Action.PREVPAGE), button('>>', action=Action.NEXTPAGE)),
-            (button('Back', action=chat_data['back']),),
-            (button('Close', action=Action.CLOSE),)
+            (button('<<', callback, action=Action.PREVPAGE),
+             button('>>', callback, action=Action.NEXTPAGE)),
+            (button('Back', callback, action=chat_data['back']),),
+            (button('Close', callback, action=Action.CLOSE),)
         ))
+        chat_data['callback'] = callback
         await message.edit_text(chat_data['menutext'], reply_markup=InlineKeyboardMarkup(buttons))
 
-    async def menuclose(self, update: Update, context: CCT):
+    async def __menuclose(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Close menu """
-        assert (message := update.effective_message) is not None, LogRecord('MENU', 'message').EFFECTIVE_IS_NONE
-        await message.edit_text('Menu closed', reply_markup=None)
+        await kwargs['message'].edit_text('Menu closed', reply_markup=None)
         # await message.delete()
         # release chat data
         self.__drop_context(context, CD)
 
     @staticmethod
     def __drop_context[DataSpec: UD | CD | BT](context: CCT, dtype: type[DataSpec]):
+        """ Release specified context """
         if dtype is UD:
             assert context.user_data is not None, LogRecord('RELEASE', 'User').DATA_IS_NONE
             # context.user_data
             ...
         elif dtype is CD:
             assert context.chat_data is not None, LogRecord('RELEASE', 'Chat').DATA_IS_NONE
-            context.chat_data['action'] = Action.CLOSE
-            context.chat_data['menulist'] = tuple()
-            context.chat_data['menutext'] = ''
-            context.chat_data['back'] = Action.CLOSE
-            context.chat_data['page'] = 0
+            context.chat_data = CD(
+                back=Action.CLOSE,
+                action=None,
+                menulist=(),
+                menutext='',
+                page=0,
+                callback={},
+            )
         elif dtype is BT:
             assert context.bot_data is not None, LogRecord('RELEASE', 'Bot').DATA_IS_NONE
             # context.bot_data

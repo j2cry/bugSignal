@@ -6,6 +6,7 @@ import sqlalchemy.dialects.mssql as mssql
 import sqlalchemy.dialects.postgresql as psql
 import typing
 
+from telegram import Chat, User, Message
 from telegram.ext import CallbackContext, ContextTypes, ExtBot
 
 
@@ -15,31 +16,9 @@ class Emoji(enum.StrEnum):
     DISABLED = '\u2716'
     DECLINED = '\u26D4'
 
-
-# bot common typing
-BT = ExtBot[None]
-UD = typing.TypedDict('UD', {})
-CD = typing.TypedDict('CD', {
-    'back': int,
-    'menulist': typing.Sequence[sa.Row],    # NOTE todo type hints?
-    'menutext': str,
-    'chat': typing.NotRequired[int],
-    'listener': typing.NotRequired[int],
-    'marker': typing.NotRequired[bool],
-    'action': 'Action | None',
-    'page': int,
-})
-CallbackProtocol = typing.TypedDict('CallbackProtocol', {
-    'action': 'Action | None',
-
-})
-BD = typing.TypedDict('BD', {})
-CCT = CallbackContext[BT, UD, CD, BD]
-CT = ContextTypes(CallbackContext, UD, CD, BD)
-
+# --------------------------------------------------------------------------------
 # callback data typing
 class Action(enum.IntEnum):
-    # SHUTDOWN = 0
     CLOSE = enum.auto()
     MENU = enum.auto()
     BACK = enum.auto()
@@ -50,24 +29,53 @@ class Action(enum.IntEnum):
     LISTENERS = enum.auto()
     SUBSCRIPTIONS = enum.auto()
 
-class CallbackData(enum.IntEnum):
+class CallbackKey(enum.StrEnum):
     ACTION = enum.auto()
     CHAT_ID = enum.auto()
     LISTENER_ID = enum.auto()
     ACTIVE = enum.auto()
 
+class CallbackContent(typing.TypedDict):
+    action: Action | None
+    page: typing.NotRequired[int]
+    identifier: typing.NotRequired[int]
+    marker: typing.NotRequired[str]
+    chat_id: typing.NotRequired[int]
+    listener_id: typing.NotRequired[int]
+    active: typing.NotRequired[bool]
+
+CallbackProtocol = typing.MutableMapping[str | None, typing.Any]
+
+# --------------------------------------------------------------------------------
+# bot context typing
+BT = ExtBot[None]
+UD = typing.TypedDict('UD', {})
+CD = typing.TypedDict('CD', {
+    'back': Action | None,
+    'menulist': typing.Sequence[sa.Row],    # NOTE todo type hints?
+    'menutext': str,
+    'chat_id': typing.NotRequired[int],
+    'listener_id': typing.NotRequired[int],
+    'marker': typing.NotRequired[bool],
+    'action': 'Action | None',
+    'page': int,
+    'callback': CallbackProtocol,
+})
+BD = typing.TypedDict('BD', {})
+CCT = CallbackContext[BT, UD, CD, BD]
+CT = ContextTypes(CallbackContext, UD, CD, BD)
+
+ValidatedContext = typing.TypedDict('ValidatedContext', {
+    'user': User,
+    'chat': Chat,
+    'message': Message,
+    'user_data': UD,
+    'chat_data': CD,
+    'bot_data': BD,
+})
 
 
-
-# CallbackData = typing.TypedDict('CallbackData', {
-#     'act': Action,
-#     'page': int,
-#     'identifier': typing.NotRequired[int],
-#     'marker': typing.NotRequired[str],
-# })
-
-
-
+# --------------------------------------------------------------------------------
 # SQL definitions
 class _ListenerTable(typing.Protocol):
     """ Specific source for receiving messages """
