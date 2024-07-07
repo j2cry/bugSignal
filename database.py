@@ -2,27 +2,24 @@ import logging
 import sqlalchemy as sa
 import sqlalchemy.orm as orm
 import typing
-# from contextlib import contextmanager
-from model import UserRole, ListenerTable, ChatTable, SubscriptionTable, AnyTable, definitions_loader
+
+from model import (
+    UserRole,
+    ListenerTable,
+    ChatTable,
+    SubscriptionTable,
+    AnyTable,
+    definitions_loader,
+    ChatValues,
+    ListenerValues,
+    SubscriptionValues,
+)
 
 
 # declare SQL table definitions
 LISTENER: ListenerTable
 CHAT: ChatTable
 SUBSCRIPTION: SubscriptionTable
-
-
-CHAT_KW = typing.TypedDict('CHAT_KW', {
-    'title': typing.NotRequired[str],
-    'type': typing.NotRequired[str],
-    'active': typing.NotRequired[bool],
-})
-LISTENER_KW = typing.TypedDict('LISTENER_KW', {
-    'title': typing.NotRequired[str],
-    'classname': typing.NotRequired[str],
-    'parameters': typing.NotRequired[str],
-    'active': typing.NotRequired[bool],
-})
 
 
 class Database:
@@ -84,7 +81,7 @@ class Database:
         with self.__engine.connect() as conn:
             return tuple(conn.execute(query).all())
 
-    def set_chat(self, chat_id: int, **values: typing.Unpack[CHAT_KW]):
+    def set_chat(self, chat_id: int, **values: typing.Unpack[ChatValues]):
         """ Insert or update chat """
         self.__insert_or_update(CHAT, CHAT.chat_id == chat_id, **values)
 
@@ -95,7 +92,7 @@ class Database:
         with self.__engine.connect() as conn:
             return tuple(conn.execute(query).all())
 
-    def set_listener(self, listener_id: int, **values: typing.Unpack[LISTENER_KW]):
+    def set_listener(self, listener_id: int, **values: typing.Unpack[ListenerValues]):
         """ Insert or update listener """
         self.__insert_or_update(LISTENER, LISTENER.listener_id == listener_id, **values)
 
@@ -125,10 +122,10 @@ class Database:
             return chat.title, tuple(conn.execute(query).all())
 
     @typing.overload
-    def set_subscription(self, subscription_id: int, **values: typing.Unpack[LISTENER_KW]) -> None: ...
+    def set_subscription(self, subscription_id: int, **values: typing.Unpack[SubscriptionValues]) -> None: ...
     @typing.overload
-    def set_subscription(self, chat_id: int, listener_id: int, **values: typing.Unpack[LISTENER_KW]) -> None: ...
-    def set_subscription(self, *identifiers: typing.Tuple[int], **values: typing.Unpack[LISTENER_KW]) -> None:  # type: ignore
+    def set_subscription(self, chat_id: int, listener_id: int, **values: typing.Unpack[SubscriptionValues]) -> None: ...
+    def set_subscription(self, *identifiers: typing.Tuple[int], **values: typing.Unpack[SubscriptionValues]) -> None:  # type: ignore
         """ Insert or update listener """
         match identifiers:
             case (int(subscription_id),):

@@ -77,6 +77,7 @@ def permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[
         assert (user := update.effective_user) is not None, LogRecord('PERMISSON', 'user').EFFECTIVE_IS_NONE
         assert (chat := update.effective_chat) is not None, LogRecord('PERMISSON', 'chat').EFFECTIVE_IS_NONE
         assert (message := update.effective_message) is not None, LogRecord('PERMISSION', 'message').EFFECTIVE_IS_NONE
+        # TODO allow MASTER to configure everything everywhere
         if chat.type != ChatType.PRIVATE:
             for admin in await chat.get_administrators():
                 if admin.user == update.effective_user:
@@ -87,6 +88,9 @@ def permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[
                 self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
                 await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
                 return await _empty_handler(self, update, context, *args, **kwargs)
+        else:
+            # TODO private permission checking
+            ...
         return await method(self, update, context, *args, **kwargs)
     return _wrapper
 
@@ -117,6 +121,7 @@ class BugSignalService:
     @permission_check
     async def menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Show menu """
+        self.__drop_context(context, CD)
         chat = kwargs['chat']
         message = kwargs['message']
         chat_data = kwargs['chat_data']
@@ -151,42 +156,42 @@ class BugSignalService:
             case {CallbackKey.ACTION: Action.CHATS}:
                 # Show Chats list
                 chat_data.update(
-                    back=Action.MENU,
+                    back_action=Action.MENU,
+                    default_button_action=Action.SWITCH,
                     menulist=self.db.chats(),
                     menutext='Available chats',
                     marker=True,
-                    action=Action.SWITCH,
                     page=0,
                 )
             case {CallbackKey.ACTION: Action.LISTENERS, CallbackKey.CHAT_ID: int(chat_id)}:
                 # show listeners' subscriptions for specified chat
                 title, subscriptions = self.db.subscriptions(chat_id)
                 chat_data.update(
-                    back=Action.SUBSCRIPTIONS,
+                    back_action=Action.SUBSCRIPTIONS,
+                    default_button_action=Action.SWITCH,
                     menulist=subscriptions,
                     menutext=f'Subscriptions for chat {title}',
                     marker=True,
-                    action=Action.SWITCH,
                     page=0,
                 )
             case {CallbackKey.ACTION: Action.LISTENERS}:
                 # show Listeners list
                 chat_data.update(
-                    back=Action.MENU,
+                    back_action=Action.MENU,
+                    default_button_action=Action.SWITCH,
                     menulist=self.db.listeners(),
                     menutext='Available listeners',
                     marker=True,
-                    action=Action.SWITCH,
                     page=0,
                 )
             case {CallbackKey.ACTION: Action.SUBSCRIPTIONS}:
                 # show Subscriptions list
                 chat_data.update(
-                    back=Action.MENU,
+                    back_action=Action.MENU,
+                    default_button_action=Action.LISTENERS,
                     menulist=self.db.chats(active_only=True),
                     menutext='Choose a chat to manage subscriptions',
                     marker=False,
-                    action=Action.LISTENERS,
                     page=0,
                 )
             # Update active state
@@ -232,20 +237,23 @@ class BugSignalService:
         message = kwargs['message']
         # check page overflow
         ITEMS_PER_PAGE = 4
-        max_pages = math.ceil(len(chat_data['menulist']) / ITEMS_PER_PAGE)
-        if chat_data['page'] < 0:
-            chat_data['page'] = max_pages - 1
-        elif chat_data['page'] >= max_pages:
+        MAXPAGE = math.ceil(len(chat_data['menulist']) / ITEMS_PER_PAGE) - 1
+        if MAXPAGE == 0 and message.text == chat_data['menutext']:
+            chat_data['page'] = 0
+            return
+        elif chat_data['page'] < 0:
+            chat_data['page'] = MAXPAGE
+        elif chat_data['page'] > MAXPAGE:
             chat_data['page'] = 0
         # build inline keyboard
         start = chat_data['page'] * ITEMS_PER_PAGE
         end = (chat_data['page'] + 1) * ITEMS_PER_PAGE
         buttons = []
         callback = {}
+        default_button_action = chat_data.pop('default_button_action', None)
         for item in chat_data['menulist'][start:end]:
-            # data: CallbackContent = dict(action=chat_data['action'])
-            data = CallbackContent(action=chat_data['action'])
-            if chat_data.get('marker'):
+            data = CallbackContent(action=default_button_action)
+            if chat_data['marker']:
                 data[CallbackKey.ACTIVE.value] = item.active
                 mark = (Emoji.ENABLED if getattr(item, 'active', False) else Emoji.DISABLED)
             else:
@@ -258,7 +266,7 @@ class BugSignalService:
         buttons.extend((
             (button('<<', callback, action=Action.PREVPAGE),
              button('>>', callback, action=Action.NEXTPAGE)),
-            (button('Back', callback, action=chat_data['back']),),
+            (button('Back', callback, action=chat_data['back_action']),),
             (button('Close', callback, action=Action.CLOSE),)
         ))
         chat_data['callback'] = callback
@@ -275,22 +283,21 @@ class BugSignalService:
     def __drop_context[DataSpec: UD | CD | BT](context: CCT, dtype: type[DataSpec]):
         """ Release specified context """
         if dtype is UD:
-            assert context.user_data is not None, LogRecord('RELEASE', 'User').DATA_IS_NONE
-            # context.user_data
+            assert (data := context.user_data) is not None, LogRecord('RELEASE', 'User').DATA_IS_NONE
             ...
         elif dtype is CD:
-            assert context.chat_data is not None, LogRecord('RELEASE', 'Chat').DATA_IS_NONE
-            context.chat_data = CD(
-                back=Action.CLOSE,
-                action=None,
+            assert (data := context.chat_data) is not None, LogRecord('RELEASE', 'Chat').DATA_IS_NONE
+            data.update(
+                back_action=None,
                 menulist=(),
                 menutext='',
+                marker=False,
                 page=0,
                 callback={},
+                default_button_action=None,
             )
         elif dtype is BT:
-            assert context.bot_data is not None, LogRecord('RELEASE', 'Bot').DATA_IS_NONE
-            # context.bot_data
+            assert (data := context.bot_data) is not None, LogRecord('RELEASE', 'Bot').DATA_IS_NONE
             ...
 
     async def _onerror(self, update: object, context: CCT):

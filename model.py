@@ -37,42 +37,60 @@ class CallbackKey(enum.StrEnum):
 
 class CallbackContent(typing.TypedDict):
     action: Action | None
-    page: typing.NotRequired[int]
-    identifier: typing.NotRequired[int]
-    marker: typing.NotRequired[str]
     chat_id: typing.NotRequired[int]
     listener_id: typing.NotRequired[int]
     active: typing.NotRequired[bool]
 
-CallbackProtocol = typing.MutableMapping[str | None, typing.Any]
+CallbackProtocol = typing.MutableMapping[str | None, CallbackContent]
 
 # --------------------------------------------------------------------------------
 # bot context typing
 BT = ExtBot[None]
 UD = typing.TypedDict('UD', {})
 CD = typing.TypedDict('CD', {
-    'back': Action | None,
+    'back_action': Action | None,           # action for BACK button
     'menulist': typing.Sequence[sa.Row],    # NOTE todo type hints?
     'menutext': str,
-    'chat_id': typing.NotRequired[int],
-    'listener_id': typing.NotRequired[int],
-    'marker': typing.NotRequired[bool],
-    'action': 'Action | None',
-    'page': int,
+    'marker': bool,                         # marker for printing ckecks before button text
+    'page': int,                            # current menu page
     'callback': CallbackProtocol,
+    'default_button_action': typing.NotRequired[Action | None],
 })
 BD = typing.TypedDict('BD', {})
 CCT = CallbackContext[BT, UD, CD, BD]
 CT = ContextTypes(CallbackContext, UD, CD, BD)
 
-ValidatedContext = typing.TypedDict('ValidatedContext', {
-    'user': User,
-    'chat': Chat,
-    'message': Message,
-    'user_data': UD,
-    'chat_data': CD,
-    'bot_data': BD,
-})
+class ValidatedContext(typing.TypedDict):
+    user: User
+    chat: Chat
+    message: Message
+    user_data: UD
+    chat_data: CD
+    bot_data: BD
+
+# --------------------------------------------------------------------------------
+# SQL typing
+class ChatValues(typing.TypedDict):
+    title: typing.NotRequired[str]
+    type: typing.NotRequired[str]
+    active: typing.NotRequired[bool]
+
+class ListenerValues(typing.TypedDict):
+    title: typing.NotRequired[str]
+    classname: typing.NotRequired[str]
+    parameters: typing.NotRequired[str]
+    active: typing.NotRequired[bool]
+
+class SubscriptionValues(typing.TypedDict):
+    active: typing.NotRequired[bool]
+
+class UserRole(enum.IntFlag):
+    """ User roles """
+    BLOCKED = 0
+    USER = enum.auto()
+    MODERATOR = enum.auto()
+    DEVELOPER = enum.auto()
+    MASTER = enum.auto()
 
 
 # --------------------------------------------------------------------------------
@@ -115,14 +133,6 @@ ChatTable: typing.TypeAlias = type[_ChatTable]
 SubscriptionTable: typing.TypeAlias = type[_SubscriptionTable]
 AnyTable = ListenerTable | ChatTable | SubscriptionTable
 
-class UserRole(enum.IntFlag):
-    """ User roles """
-    BLOCKED = 0
-    USER = enum.auto()
-    MODERATOR = enum.auto()
-    DEVELOPER = enum.auto()
-    MASTER = enum.auto()
-
 
 def definitions_loader(dialect: str) -> tuple[ListenerTable,
                                               ChatTable,
@@ -149,7 +159,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 __tablename__ = 'chat'
                 chat_id = sa.Column(mssql.BIGINT, primary_key=True)
                 title = sa.Column(mssql.VARCHAR(500))
-                role = sa.Column(mssql.SMALLINT, nullable=False, server_default=sa.literal(0))
+                role = sa.Column(mssql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.USER))
                 type = sa.Column(mssql.VARCHAR(10), nullable=False)
                 active = sa.Column(mssql.BIT, server_default=sa.literal(True))
                 created = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
@@ -181,7 +191,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 __tablename__ = 'chat'
                 chat_id = sa.Column(psql.BIGINT, primary_key=True)
                 title = sa.Column(psql.VARCHAR(500))
-                role = sa.Column(psql.SMALLINT, nullable=False, server_default=sa.literal(0))
+                role = sa.Column(psql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.USER))
                 type = sa.Column(psql.VARCHAR(10), nullable=False)
                 active = sa.Column(psql.BOOLEAN, server_default=sa.literal(True))
                 created = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
