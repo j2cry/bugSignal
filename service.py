@@ -133,7 +133,7 @@ class BugSignalService:
     async def start(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Remember chat id """
         self.db.set_chat(kwargs['chat'].id,
-                         title=kwargs['chat'].effective_name or str(kwargs['chat'].id),
+                         title=kwargs['chat'].username or kwargs['chat'].effective_name or str(kwargs['chat'].id),
                          type=kwargs['chat'].type)
         await kwargs['message'].reply_text(f'{Emoji.ENABLED} Current chat information saved.')  # NOTE hardcoded message
 
