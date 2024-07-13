@@ -77,20 +77,16 @@ def permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[
         assert (user := update.effective_user) is not None, LogRecord('PERMISSON', 'user').EFFECTIVE_IS_NONE
         assert (chat := update.effective_chat) is not None, LogRecord('PERMISSON', 'chat').EFFECTIVE_IS_NONE
         assert (message := update.effective_message) is not None, LogRecord('PERMISSION', 'message').EFFECTIVE_IS_NONE
-        # TODO allow MASTER to configure everything everywhere
-        if chat.type != ChatType.PRIVATE:
-            for admin in await chat.get_administrators():
-                if admin.user == update.effective_user:
-                    break
-            else:
-                if (callback_query := update.callback_query) is not None:
-                    await callback_query.answer('jap-jap-jap')
-                self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
-                await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
-                return await _empty_handler(self, update, context, *args, **kwargs)
-        else:
-            # TODO private permission checking
-            ...
+        # callback answer
+        if (callback_query := update.callback_query) is not None:
+            await callback_query.answer('jap-jap-jap')
+        # get effective user role
+        user_role = getattr((stored_chat := self.db.chat(user.id)), 'role', None)
+        # check permissions: allow MASTER to configure everything everywhere
+        if user_role != UserRole.MASTER and (chat.type == ChatType.PRIVATE or user not in await chat.get_administrators()):
+            self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
+            await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
+            return await _empty_handler(self, update, context, *args, **kwargs)
         return await method(self, update, context, *args, **kwargs)
     return _wrapper
 

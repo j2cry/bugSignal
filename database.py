@@ -83,7 +83,7 @@ class Database:
 
     def set_chat(self, chat_id: int, **values: typing.Unpack[ChatValues]):
         """ Insert or update chat """
-        self.__insert_or_update(CHAT, CHAT.chat_id == chat_id, **values)
+        self.__insert_or_update(CHAT, CHAT.chat_id == chat_id, chat_id=chat_id, **values)
 
     def listeners(self, active_only: bool = False) -> typing.Sequence[sa.Row]:
         """ Request for all listeners for specified chat """
@@ -137,3 +137,10 @@ class Database:
                                         chat_id=chat_id,
                                         listener_id=listener_id,
                                         **values)
+
+    def chat(self, chat_id: int) -> sa.Row | None:
+        """ Request for specified chat info """
+        query = sa.select(CHAT).where(CHAT.chat_id == chat_id)
+        self.__logger.debug(str(query))
+        with self.__engine.connect() as conn:
+            return conn.execute(query).first()
