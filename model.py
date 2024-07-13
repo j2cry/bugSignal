@@ -91,6 +91,9 @@ class UserRole(enum.IntFlag):
     MODERATOR = enum.auto()
     DEVELOPER = enum.auto()
     MASTER = enum.auto()
+    ADMINS = MODERATOR | MASTER
+    ACTIVE = USER | MODERATOR | DEVELOPER | MASTER
+    ANY = BLOCKED | ACTIVE
 
 
 # --------------------------------------------------------------------------------

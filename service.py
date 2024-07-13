@@ -70,25 +70,39 @@ def checkvars[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Upda
     return _wrapper
 
 
-def permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
-    """ Decorator for checking permissions """
-    async def _empty_handler(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T: ...
-    async def _wrapper(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T:
-        assert (user := update.effective_user) is not None, LogRecord('PERMISSON', 'user').EFFECTIVE_IS_NONE
-        assert (chat := update.effective_chat) is not None, LogRecord('PERMISSON', 'chat').EFFECTIVE_IS_NONE
-        assert (message := update.effective_message) is not None, LogRecord('PERMISSION', 'message').EFFECTIVE_IS_NONE
-        # callback answer
-        if (callback_query := update.callback_query) is not None:
-            await callback_query.answer('jap-jap-jap')
-        # get effective user role
-        user_role = getattr((stored_chat := self.db.chat(user.id)), 'role', None)
-        # check permissions: allow MASTER to configure everything everywhere
-        if user_role != UserRole.MASTER and (chat.type == ChatType.PRIVATE or user not in await chat.get_administrators()):
-            self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
-            await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
-            return await _empty_handler(self, update, context, *args, **kwargs)
-        return await method(self, update, context, *args, **kwargs)
-    return _wrapper
+def allowed_for(roles: UserRole, admin: bool):
+    """ Decorator for checking permissions
+
+    Parameters
+    ----------
+    roles : UserRole
+        A set of roles that are allowed to execute a command
+    admin : bool
+        Flag for allowing Telegram chat administrators to execute the command
+    """
+    def _permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
+        async def _empty_handler(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T: ...
+        async def _wrapper(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T:
+            assert (user := update.effective_user) is not None, LogRecord('PERMISSON', 'user').EFFECTIVE_IS_NONE
+            assert (chat := update.effective_chat) is not None, LogRecord('PERMISSON', 'chat').EFFECTIVE_IS_NONE
+            assert (message := update.effective_message) is not None, LogRecord('PERMISSION', 'message').EFFECTIVE_IS_NONE
+            # callback answer
+            if (callback_query := update.callback_query) is not None:
+                await callback_query.answer('jap-jap-jap')
+            # get stored user role
+            user_roles = (set(UserRole(stored_chat.role))
+                          if (stored_chat := self.db.chat(user.id)) is not None
+                          else set())
+            # check permissions
+            if not user_roles.intersection(roles) and (not admin
+                                                       or chat.type == ChatType.PRIVATE
+                                                       or user not in await chat.get_administrators()):
+                self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
+                await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
+                return await _empty_handler(self, update, context, *args, **kwargs)
+            return await method(self, update, context, *args, **kwargs)
+        return _wrapper
+    return _permission_check
 
 
 class BugSignalService:
@@ -114,7 +128,7 @@ class BugSignalService:
         await kwargs['message'].reply_text(f'{Emoji.ENABLED} Current chat information saved.')  # NOTE hardcoded message
 
     @checkvars
-    @permission_check
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
     async def menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Show menu """
         self.__drop_context(context, CD)
@@ -138,7 +152,7 @@ class BugSignalService:
             await context.bot.send_message(chat.id, 'bugSignal admin panel', reply_markup=menu)
 
     @checkvars
-    @permission_check
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
     async def callback(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Parse callback data """
         assert (callback_query := update.callback_query) is not None, LogRecord.CALLBACK_IS_NONE
