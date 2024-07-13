@@ -13,8 +13,8 @@ from telegram.ext import (
     MessageHandler
 )
 
-from service import (
-    BugSignalService,
+from service import BugSignalService
+from model import (
     CCT,
     CT
 )
@@ -66,8 +66,9 @@ if __name__ == '__main__':
     assert application.job_queue is not None, f"Cannot initialize job queue"
     # add handlers
     application.add_handler(CommandHandler('start', bot.start))
-    application.add_handler(CommandHandler('menu', bot.menu))
-    application.add_handler(CallbackQueryHandler(bot.callback, ))
+    application.add_handler(CommandHandler('fox', bot.fox))
+    application.add_handler(CommandHandler('menu', bot.main_menu))
+    application.add_handler(CallbackQueryHandler(bot.main_menu_callback, ))
 
     # application.add_handler(CallbackQueryHandler(bot.chatlist, CallbackAction.CHATLIST))
 

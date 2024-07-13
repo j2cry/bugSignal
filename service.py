@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import random
 from contextlib import contextmanager
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ChatType
@@ -22,7 +23,10 @@ from model import (
 )
 
 
-def button(name: str, data: CallbackProtocol, **kwargs: Unpack[CallbackContent]) -> InlineKeyboardButton:
+def button(name: str,
+           data: CallbackProtocol,
+           **kwargs: Unpack[CallbackContent],
+           ) -> InlineKeyboardButton:
     hashkey = str(hash(str(kwargs)))
     data[hashkey] = kwargs
     return InlineKeyboardButton(name, callback_data=hashkey)
@@ -44,7 +48,9 @@ def button(name: str, data: CallbackProtocol, **kwargs: Unpack[CallbackContent])
 #     return _wrapper
 
 
-def checkvars[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
+def checkvars[S: BugSignalService, T, **KW](
+        method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]
+        ) -> Callable[[S, Update, CCT], Coroutine[Any, Any, T]]:
     """ Decorator for checking general variables """
     def _wrapper(self: S,
                  update: Update,
@@ -94,13 +100,15 @@ def allowed_for(roles: UserRole, admin: bool):
                           if (stored_chat := self.db.chat(user.id)) is not None
                           else set())
             # check permissions
-            if not user_roles.intersection(roles) and (not admin
-                                                       or chat.type == ChatType.PRIVATE
-                                                       or user not in await chat.get_administrators()):
-                self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
-                await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
-                return await _empty_handler(self, update, context, *args, **kwargs)
-            return await method(self, update, context, *args, **kwargs)
+            administrators = ({_admin.user for _admin in await chat.get_administrators()}
+                              if chat.type != ChatType.PRIVATE
+                              else set())
+            if user_roles.intersection(roles) or (admin and chat.type != ChatType.PRIVATE and user in administrators):
+                return await method(self, update, context, *args, **kwargs)
+            # restrict command execution
+            self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
+            await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
+            return await _empty_handler(self, update, context, *args, **kwargs)
         return _wrapper
     return _permission_check
 
@@ -119,6 +127,8 @@ class BugSignalService:
         yield self
         self.db.dispose()
 
+    # --------------------------------------------------------------------------------
+    # common command handlers
     @checkvars
     async def start(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Remember chat id """
@@ -128,9 +138,26 @@ class BugSignalService:
         await kwargs['message'].reply_text(f'{Emoji.ENABLED} Current chat information saved.')  # NOTE hardcoded message
 
     @checkvars
+    async def fox(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Send fox emoji """
+        privates = tuple(chat.chat_id for chat in self.db.chats(active_only=True, of_types='private')
+                         if chat.chat_id != kwargs['user'].id)
+        try:
+            chat_id = int(context.args[0])   # type: ignore
+            if chat_id not in privates:
+                raise ValueError()
+        except (IndexError, ValueError):
+            chat_id = random.choice(privates)
+        self.logger.info('%s sent a fox to %s', kwargs['user'].name, chat_id)
+        await context.bot.send_message(chat_id, '🦊')
+
+    # --------------------------------------------------------------------------------
+    # Inline menu handlers
+    # Be careful: all menu methods must have the same permissions decoration!
+    @checkvars
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
-    async def menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
-        """ Show menu """
+    async def main_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Show main menu """
         self.__drop_context(context, CD)
         chat = kwargs['chat']
         message = kwargs['message']
@@ -153,7 +180,7 @@ class BugSignalService:
 
     @checkvars
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
-    async def callback(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+    async def main_menu_callback(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Parse callback data """
         assert (callback_query := update.callback_query) is not None, LogRecord.CALLBACK_IS_NONE
         await callback_query.answer('jap-jap-jap')
@@ -162,7 +189,7 @@ class BugSignalService:
         data = chat_data.get('callback', {}).get(callback_query.data)
         match data:
             case {CallbackKey.ACTION: Action.MENU}:
-                return await self.menu(update, context, **kwargs)
+                return await self.main_menu(update, context)
             case {CallbackKey.ACTION: Action.CHATS}:
                 # Show Chats list
                 chat_data.update(
@@ -241,6 +268,8 @@ class BugSignalService:
                 return
         await self.__menupage(update, context, **kwargs)
 
+    # --------------------------------------------------------------------------------
+    # common menu methods
     async def __menupage(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Build next menu page """
         chat_data = kwargs['chat_data']
@@ -289,6 +318,7 @@ class BugSignalService:
         # release chat data
         self.__drop_context(context, CD)
 
+    # --------------------------------------------------------------------------------
     @staticmethod
     def __drop_context[DataSpec: UD | CD | BT](context: CCT, dtype: type[DataSpec]):
         """ Release specified context """
@@ -310,6 +340,7 @@ class BugSignalService:
             assert (data := context.bot_data) is not None, LogRecord('RELEASE', 'Bot').DATA_IS_NONE
             ...
 
+    # --------------------------------------------------------------------------------
     async def _onerror(self, update: object, context: CCT):
         """ Error handler """
         self.logger.error(str(context.error))

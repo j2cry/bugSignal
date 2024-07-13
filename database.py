@@ -73,10 +73,15 @@ class Database:
             session.execute(query)
         self.__logger.info('Updated data for %s: %s', table.__tablename__, values)
 
-    def chats(self, active_only: bool = False) -> typing.Sequence[sa.Row]:
-    # def chats(self, active_only: bool = False) -> Sequence[Row[Tuple[ChatTable]]]:
-        """ Request for all active chats """
-        query = sa.select(CHAT).where(CHAT.active.in_((True, active_only))).order_by(CHAT.chat_id)
+    def chats(self,
+              active_only: bool = False,
+              of_types: str | typing.Sequence[str] | None = None,
+              ) -> typing.Sequence[sa.Row]:
+        """ Request for chats """
+        clauses = [CHAT.active.in_((True, active_only))]
+        if of_types is not None:
+            clauses.append(CHAT.type.in_((of_types,) if isinstance(of_types, str) else of_types))
+        query = sa.select(CHAT).where(*clauses).order_by(CHAT.chat_id)
         self.__logger.debug(str(query))
         with self.__engine.connect() as conn:
             return tuple(conn.execute(query).all())
