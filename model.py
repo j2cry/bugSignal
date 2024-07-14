@@ -10,6 +10,9 @@ from collections import namedtuple
 from telegram import Chat, User, Message
 from telegram.ext import CallbackContext, ContextTypes, ExtBot
 
+if typing.TYPE_CHECKING:
+    from menupage import InlineMenuPage
+
 
 # Telegram emoji
 class Emoji(enum.StrEnum):
@@ -17,74 +20,44 @@ class Emoji(enum.StrEnum):
     DISABLED = '\u2716'
     DECLINED = '\u26D4'
 
-# --------------------------------------------------------------------------------
-# callback data typing
-class MenuPattern(enum.StrEnum):
-    EMPTY = ''
-    MAIN = enum.auto()
-    GRANT = enum.auto()
 
-class Action(enum.IntEnum):
-    CLOSE = enum.auto()
-    MENU = enum.auto()
-    BACK = enum.auto()
-    NEXTPAGE = enum.auto()
-    PREVPAGE = enum.auto()
-    SWITCH = enum.auto()
-    CHATS = enum.auto()
-    LISTENERS = enum.auto()
-    SUBSCRIPTIONS = enum.auto()
-    ROLES = enum.auto()
+class UserRole(enum.IntFlag):
+    """ User roles """
+    BLOCKED = 0
+    USER = enum.auto()
+    MODERATOR = enum.auto()
+    MASTER = enum.auto()
+    DEVELOPER = enum.auto()
+    WIZARD = enum.auto()
+    PALLADIN = enum.auto()
+    NECROMANCER = enum.auto()
+    ADMINS = MODERATOR | MASTER
+    ACTIVE = USER | MODERATOR | MASTER
 
-class CallbackKey(enum.StrEnum):
-    ACTION = enum.auto()
-    CHAT_ID = enum.auto()
-    LISTENER_ID = enum.auto()
-    ROLE = enum.auto()
-    ACTIVE = enum.auto()
-
-class CallbackContent(typing.TypedDict):
-    action: Action | None
-    chat_id: typing.NotRequired[int]
-    listener_id: typing.NotRequired[int]
-    active: typing.NotRequired[bool]
-
-CallbackProtocol = typing.MutableMapping[str | None, CallbackContent]
 
 # --------------------------------------------------------------------------------
 # bot context typing
-class RowLike(typing.Protocol):
-    @property
-    def _fields(self) -> tuple[str, ...]: ...
-    def _asdict(self) -> dict[str, typing.Any]: ...
-    def __getattr__(self, name: str) -> typing.Any: ...
-
 BT = ExtBot[None]
 UD = typing.TypedDict('UD', {})
 CD = typing.TypedDict('CD', {
-    'back_action': Action | None,           # action for BACK button
-    'menupattern': MenuPattern,
-    'menulist': typing.Sequence[RowLike],    # NOTE todo type hints?
-    'menutext': str,
-    'marker': bool,                         # marker for printing ckecks before button text
-    'page': int,                            # current menu page
-    'callback': CallbackProtocol,
-    'default_button_action': typing.NotRequired[Action | None],
+    'menupage': typing.NotRequired['InlineMenuPage'],
 })
 BD = typing.TypedDict('BD', {})
 CCT = CallbackContext[BT, UD, CD, BD]
 CT = ContextTypes(CallbackContext, UD, CD, BD)
 
 class ValidatedContext(typing.TypedDict):
+    """ Extra keyword arguments for Telegram command handlers """
     user: User
     chat: Chat
     message: Message
     user_data: UD
     chat_data: CD
     bot_data: BD
+    callback_data: str
 
 # --------------------------------------------------------------------------------
-# SQL typing
+# SQL insert/update row typing
 class ChatValues(typing.TypedDict):
     title: typing.NotRequired[str]
     type: typing.NotRequired[str]
@@ -100,20 +73,15 @@ class ListenerValues(typing.TypedDict):
 class SubscriptionValues(typing.TypedDict):
     active: typing.NotRequired[bool]
 
-class UserRole(enum.IntFlag):
-    """ User roles """
-    BLOCKED = 0
-    USER = enum.auto()
-    MODERATOR = enum.auto()
-    DEVELOPER = enum.auto()
-    MASTER = enum.auto()
-    ADMINS = MODERATOR | MASTER
-    ACTIVE = USER | MODERATOR | DEVELOPER | MASTER
-    ANY = BLOCKED | ACTIVE
-
 
 # --------------------------------------------------------------------------------
-# SQL definitions
+# SQL row
+class RowLike(typing.Protocol):
+    @property
+    def _fields(self) -> tuple[str, ...]: ...
+    def _asdict(self) -> dict[str, typing.Any]: ...
+    def __getattr__(self, name: str) -> typing.Any: ...
+
 class CustomTableRow:
     def __new__(cls, **kwargs) -> RowLike:
         _class = namedtuple('_CustomTableRow', kwargs.keys())
@@ -125,6 +93,8 @@ class CustomTableRow:
     def __getattr__(self, name: str) -> typing.Any:
         return self.__getattribute__(name)
 
+# --------------------------------------------------------------------------------
+# SQL definitions
 class _ListenerTable(typing.Protocol):
     """ Specific source for receiving messages """
     __tablename__: str

@@ -1,35 +1,31 @@
 from __future__ import annotations
 import logging
-import math
 import os
 import random
 from contextlib import contextmanager
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.constants import ChatType
 from telegram.error import BadRequest
 from typing import Any, Callable, Concatenate, Coroutine, Unpack
 
 from database import Database
 from defaults import LogRecord
+from menupage import (
+    Action,
+    Button,
+    CallbackKey,
+    InlineMenuPage,
+    MenuError,
+    MenuPattern,
+)
 from model import (
     UserRole,
-    Action,
-    CallbackKey,
-    CallbackContent,
+    CustomTableRow,
     Emoji,
-    MenuPattern,
-    UD, CD, BD, BT, CCT, CT,
+    # UD, CD, BD, BT, CCT, CT,
+    CCT,
     ValidatedContext
 )
-
-
-def button(name: str,
-           chat_data: CD,
-           **kwargs: Unpack[CallbackContent],
-           ) -> InlineKeyboardButton:
-    hashkey = str(hash(str(kwargs)))
-    chat_data['callback'][hashkey] = kwargs
-    return InlineKeyboardButton(name, callback_data=f'{chat_data["menupattern"]}{hashkey}')
 
 
 # def logcommand[S: BugSignalService, T](method: Callable[[S, Update, CCT], Coroutine[Any, Any, T]]):
@@ -64,6 +60,10 @@ def checkvars[S: BugSignalService, T, **KW](
         assert (user_data := context.user_data) is not None, LogRecord('CHECKVARS', 'User').DATA_IS_NONE
         assert (chat_data := context.chat_data) is not None, LogRecord('CHECKVARS', 'Chat').DATA_IS_NONE
         assert (bot_data := context.bot_data) is not None, LogRecord('CHECKVARS', 'Bot').DATA_IS_NONE
+        if (query := update.callback_query) is not None:
+            callback_data = query.data or ''
+        else:
+            callback_data = ''
         kwargs.update(
             user=user,
             chat=chat,
@@ -71,6 +71,7 @@ def checkvars[S: BugSignalService, T, **KW](
             user_data=user_data,
             chat_data=chat_data,
             bot_data=bot_data,
+            callback_data=callback_data
         )
         return method(self, update, context, *args, **kwargs)
     return _wrapper
@@ -152,298 +153,273 @@ class BugSignalService:
         await context.bot.send_message(chat_id, '🦊')
 
     # --------------------------------------------------------------------------------
+    # Common inline menu
+    @checkvars
+    async def __menu_refresh(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Refresh menu page """
+        if (menupage := kwargs['chat_data'].get('menupage')) is None:
+            raise MenuError('Menu page context is broken')
+        markup = menupage.markup
+        if kwargs['message'].text == menupage.title and kwargs['message'].reply_markup == markup:
+            return
+        try:
+            await kwargs['message'].edit_text(menupage.title, reply_markup=markup)
+        except BadRequest:
+            await context.bot.send_message(kwargs['chat'].id, menupage.title, reply_markup=markup)
+
+    @checkvars
+    async def __menu_commons(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Handle common inline menu callbacks: DO NOT USE AS DIRECT COMMAND HANDLER """
+        chat_data = kwargs['chat_data']
+        if (menupage := kwargs['chat_data'].get('menupage')) is None:
+            raise MenuError('Menu page context is broken')
+        # match inline query callback
+        content = menupage.content(kwargs['callback_data'])
+        match content:
+            # ----------------------------------------
+            # open next page
+            case {CallbackKey.ACTION: Action.PREVPAGE}:
+                menupage.page -= 1
+            # open previous page
+            case {CallbackKey.ACTION: Action.NEXTPAGE}:
+                menupage.page += 1
+            # open previous menu
+            case {CallbackKey.ACTION: Action.BACK} if menupage.previous is not None:
+                menupage = menupage.previous
+                chat_data['menupage'] = menupage
+            # close menu
+            case {CallbackKey.ACTION: Action.CLOSE}:
+                chat_data.pop('menupage')
+                return await kwargs['message'].edit_text('Menu closed', reply_markup=None)
+        # refresh menu
+        await self.__menu_refresh(update, context)
+
+    # --------------------------------------------------------------------------------
     # Inline main menu
     @checkvars
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
     async def main_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Show main menu """
         chat_data = kwargs['chat_data']
-        # get callback saved data
-        data, hashkey = self.__get_callback_query_data(update, chat_data)
-        # first or back menu open
-        if (data or {}).get(CallbackKey.ACTION) in {Action.MENU, None}:
-            # check that menu is opened FIXME
-            # if await self.__menu_is_opened(update, context):
-            #     return
+        # first or back open menu
+        if (menupage := chat_data.get('menupage')) is None:
+            if kwargs['callback_data']:
+                raise MenuError('Menu page context is broken')
             # build menu
-            self.__drop_context(context, CD)
-            chat_data['menupattern'] = MenuPattern.MAIN
-            menu = InlineKeyboardMarkup(((
-                button('Chats', chat_data, action=Action.CHATS),
-                button('Listeners', chat_data, action=Action.LISTENERS),
-            ), (
-                button('Subscriptions', chat_data, action=Action.SUBSCRIPTIONS),
-            ), (
-                button('Close', chat_data, action=Action.CLOSE),
-            ),))
+            menupage = InlineMenuPage(
+                pattern=MenuPattern.MAIN,
+                title='bugSignal admin panel',
+                items=(CustomTableRow(title='Chats',
+                                      action=Action.CHATS,
+                                      pattern=MenuPattern.CHATS),
+                       CustomTableRow(title='Listeners',
+                                      action=Action.LISTENERS,
+                                      pattern=MenuPattern.LISTENERS),
+                       CustomTableRow(title='Subscriptions',
+                                      action=Action.SUBSCRIPTIONS,
+                                      pattern=MenuPattern.SUBSCRIPTIONS),
+                       CustomTableRow(title='Roles',
+                                      action=Action.ROLES,
+                                      pattern=MenuPattern.ROLES),
+                       )
+            )
+            chat_data['menupage'] = menupage
+            markup = menupage.markup
             try:
-                await kwargs['message'].edit_text('bugSignal admin panel', reply_markup=menu)
+                await kwargs['message'].edit_text(menupage.title, reply_markup=markup)
             except BadRequest:
-                await context.bot.send_message(kwargs['chat'].id, 'bugSignal admin panel', reply_markup=menu)
+                await context.bot.send_message(kwargs['chat'].id, menupage.title, reply_markup=markup)
             return
         # match inline query callback
-        match data:
-            case {CallbackKey.ACTION: Action.MENU}:
-                return await self.main_menu(update, context)
-            case {CallbackKey.ACTION: Action.CHATS}:
-                # Show Chats list
-                chat_data.update(
-                    back_action=Action.MENU,
-                    default_button_action=Action.SWITCH,
-                    menulist=self.db.chats(),
-                    menutext='Available chats',
-                    marker=True,
-                    page=0,
-                )
-            case {CallbackKey.ACTION: Action.LISTENERS, CallbackKey.CHAT_ID: int(chat_id)}:
-                # show listeners' subscriptions for specified chat
-                title, subscriptions = self.db.subscriptions(chat_id)
-                chat_data.update(
-                    back_action=Action.SUBSCRIPTIONS,
-                    default_button_action=Action.SWITCH,
-                    menulist=subscriptions,
-                    menutext=f'Subscriptions for chat {title}',
-                    marker=True,
-                    page=0,
-                )
+        content = menupage.content(kwargs['callback_data'])
+        match content:
+            case _:
+                return await self.__menu_commons(update, context)
+        # refresh menu
+        # await self.__menu_refresh(update, context)
+
+    # --------------------------------------------------------------------------------
+    # Inline listeners menu
+    @checkvars
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
+    async def listeners_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Handle LISTENERS menu callback """
+        if (menupage := kwargs['chat_data'].get('menupage')) is None:
+            raise MenuError('Menu page context is broken')
+        content = menupage.content(kwargs['callback_data'])
+        # match inline query callback
+        match content:
+            # prepare existing Listeners list
             case {CallbackKey.ACTION: Action.LISTENERS}:
-                # show Listeners list
-                chat_data.update(
-                    back_action=Action.MENU,
-                    default_button_action=Action.SWITCH,
-                    menulist=self.db.listeners(),
-                    menutext='Available listeners',
-                    marker=True,
-                    page=0,
+                menupage = InlineMenuPage(
+                    pattern=MenuPattern.LISTENERS,
+                    title='Available listeners',
+                    items=self.db.listeners(),
+                    items_action=Action.SWITCH,
+                    checkmark=True,
+                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    previous=menupage,
                 )
+                kwargs['chat_data']['menupage'] = menupage
+            # switch Listener active state
+            case {CallbackKey.ACTION: Action.SWITCH,
+                  CallbackKey.LISTENER_ID: int(listener_id),
+                  CallbackKey.ACTIVE: bool() | None as active}:
+                self.logger.debug('Enable/disable LISTENER')
+                self.db.set_listener(listener_id, active=not active)
+                menupage.items = self.db.listeners()
+            case _:
+                return await self.__menu_commons(update, context)
+        # refresh menu
+        await self.__menu_refresh(update, context)
+
+    # --------------------------------------------------------------------------------
+    # Inline chats menu
+    @checkvars
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
+    async def chats_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Handle CHATS menu callback """
+        if (menupage := kwargs['chat_data'].get('menupage')) is None:
+            raise MenuError('Menu page context is broken')
+        content = menupage.content(kwargs['callback_data'])
+        # match inline query callback
+        match content:
+            # prepare existing Chats list
+            case {CallbackKey.ACTION: Action.CHATS}:
+                menupage = InlineMenuPage(
+                    pattern=MenuPattern.CHATS,
+                    title='Available chats',
+                    items=self.db.chats(),      # TODO exclude self
+                    items_action=Action.SWITCH,
+                    checkmark=True,
+                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    previous=menupage,
+                )
+                kwargs['chat_data']['menupage'] = menupage
+            # switch Chat active state
+            case {CallbackKey.ACTION: Action.SWITCH,
+                  CallbackKey.CHAT_ID: int(chat_id),
+                  CallbackKey.ACTIVE: bool() | None as active}:
+                self.logger.debug('Enable/disable LISTENER')
+                self.db.set_chat(chat_id, active=not active)
+                menupage.items = self.db.chats()
+            case _:
+                return await self.__menu_commons(update, context)
+        # refresh menu
+        await self.__menu_refresh(update, context)
+
+    # --------------------------------------------------------------------------------
+    # Inline subscriptions menu
+    @checkvars
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
+    async def subscriptions_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Handle SUBSCRIPTIONS menu callback """
+        if (menupage := kwargs['chat_data'].get('menupage')) is None:
+            raise MenuError('Menu page context is broken')
+        content = menupage.content(kwargs['callback_data'])
+        # match inline query callback
+        match content:
+            # prepare active chats list for subscription managing
             case {CallbackKey.ACTION: Action.SUBSCRIPTIONS}:
-                # show Subscriptions list
-                chat_data.update(
-                    back_action=Action.MENU,
-                    default_button_action=Action.LISTENERS,
-                    menulist=self.db.chats(active_only=True),
-                    menutext='Choose a chat to manage subscriptions',
-                    marker=False,
-                    page=0,
+                menupage = InlineMenuPage(
+                    pattern=MenuPattern.SUBSCRIPTIONS,
+                    title='Choose a chat to manage subscriptions',
+                    items=self.db.chats(active_only=True),
+                    items_action=Action.LISTENERS,
+                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    previous=menupage,
                 )
-            # Update active state
+                kwargs['chat_data']['menupage'] = menupage
+            # prepare listeners list for chat with checked subscriptions
+            case {CallbackKey.ACTION: Action.LISTENERS,
+                  CallbackKey.CHAT_ID: int(chat_id)}:
+                title, subscriptions = self.db.subscriptions(chat_id)
+                menupage = InlineMenuPage(
+                    pattern=MenuPattern.SUBSCRIPTIONS,
+                    title=f'Set subscriptions for {title}',
+                    items=subscriptions,
+                    items_action=Action.SWITCH,
+                    checkmark=True,
+                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    previous=menupage,
+                )
+                kwargs['chat_data']['menupage'] = menupage
+            # insert/update Subscription
             case {CallbackKey.ACTION: Action.SWITCH,
                   CallbackKey.CHAT_ID: int(chat_id),
                   CallbackKey.LISTENER_ID: int(listener_id),
-                  CallbackKey.ACTIVE: bool() | None as active,
-                  }:
+                  CallbackKey.ACTIVE: bool() | None as active}:
                 # insert/update Subscription
                 self.logger.debug('Insert/update SUBSCRIPTION')
                 self.db.set_subscription(chat_id, listener_id, active=not active)
-                _, chat_data['menulist'] = self.db.subscriptions(chat_id)
-            case {CallbackKey.ACTION: Action.SWITCH,
-                  CallbackKey.CHAT_ID: int(chat_id),
-                  CallbackKey.ACTIVE: bool(active)}:
-                # update Chat activity
-                self.logger.debug('Enable/disable CHAT')
-                self.db.set_chat(chat_id, active=not active)
-                chat_data['menulist'] = self.db.chats()
-            case {CallbackKey.ACTION: Action.SWITCH,
-                  CallbackKey.LISTENER_ID: int(listener_id),
-                  CallbackKey.ACTIVE: bool(active)}:
-                # update Chat activity
-                self.logger.debug('Enable/disable LISTENER')
-                self.db.set_listener(listener_id, active=not active)
-                chat_data['menulist'] = self.db.listeners()
-            # basic menu commands
-            case {CallbackKey.ACTION: Action.PREVPAGE}:
-                chat_data['page'] -= 1
-            case {CallbackKey.ACTION: Action.NEXTPAGE}:
-                chat_data['page'] += 1
-            case {CallbackKey.ACTION: Action.CLOSE}:
-                return await self.__menuclose(update, context, **kwargs)
+                _, menupage.items = self.db.subscriptions(chat_id)
             case _:
-                await kwargs['message'].edit_text('Something is wrong...', reply_markup=None)
-                self.__drop_context(context, CD)
-                return
-        await self.__menupage(update, context, **kwargs)
+                return await self.__menu_commons(update, context)
+        await self.__menu_refresh(update, context)
 
     # --------------------------------------------------------------------------------
-    # Inline grant permissions menu
+    # Inline roles menu
     @checkvars
-    async def grant_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
-        """ Show grant permissions menu
-
-        This was implemented as demo of menu building
-        """
-        # callback answer NOTE DEBUG
-        if (callback_query := update.callback_query) is not None:
-            await callback_query.answer('jap-jap-jap')
-        chat_data = kwargs['chat_data']
-        # get callback saved data
-        data, hashkey = self.__get_callback_query_data(update, chat_data)
-        # first or back menu open
-        if (data or {}).get(CallbackKey.ACTION) in {Action.MENU, None}:
-            # check that menu is opened FIXME
-            # if await self.__menu_is_opened(update, context):
-            #     return
-            # build menu
-            self.__drop_context(context, CD)
-            chat_data['menupattern'] = MenuPattern.GRANT
-            chat_data.update(
-                back_action=Action.CLOSE,
-                default_button_action=Action.ROLES,
-                menulist=self.db.chats(active_only=True, of_types=ChatType.PRIVATE),
-                menutext='Available private chats',
-                page=0,
-            )
-            return await self.__menupage(update, context, with_back_button=False, **kwargs)
+    @allowed_for(UserRole.MASTER, admin=False)
+    async def roles_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Handle ROLES menu callback """
+        if (menupage := kwargs['chat_data'].get('menupage')) is None:
+            raise MenuError('Menu page context is broken')
+        content = menupage.content(kwargs['callback_data'])
         # match inline query callback
-        match data:
-            case {CallbackKey.ACTION: Action.ROLES,
+        match content:
+            # prepare private chats list
+            case {CallbackKey.ACTION: Action.ROLES}:
+                # build menu
+                menupage = InlineMenuPage(
+                    pattern=MenuPattern.ROLES,
+                    title='Available private chats',
+                    items=self.db.chats(active_only=True, of_types=ChatType.PRIVATE),   # TODO exclude self
+                    items_action=Action.CHATS,
+                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    previous=menupage
+                )
+                kwargs['chat_data']['menupage'] = menupage
+            # prepare roles list for chat
+            case {CallbackKey.ACTION: Action.CHATS,
                   CallbackKey.CHAT_ID: int(chat_id)}:
                 username, roles = self.db.roles(chat_id)
-                chat_data.update(
-                    back_action=Action.MENU,
-                    default_button_action=Action.SWITCH,
-                    menulist=roles,
-                    menutext=f'User roles for {username}',
-                    marker=True,
-                    page=0,
+                menupage = InlineMenuPage(
+                    MenuPattern.ROLES,
+                    title=f'Set roles for {username}',
+                    items=roles,
+                    items_action=Action.SWITCH,
+                    checkmark=True,
+                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    previous=menupage,
                 )
+                kwargs['chat_data']['menupage'] = menupage
+            # switch role state
             case {CallbackKey.ACTION: Action.SWITCH,
                   CallbackKey.CHAT_ID: int(chat_id),
                   CallbackKey.ROLE: UserRole(role)}:
                 # update role
                 self.logger.debug('Add/remove PRIVATE role')
                 self.db.set_chat(chat_id, role=role)
-                _, roles = self.db.roles(chat_id)
-                chat_data['menulist'] = roles
-
-            # basic menu commands
-            case {CallbackKey.ACTION: Action.PREVPAGE}:
-                chat_data['page'] -= 1
-            case {CallbackKey.ACTION: Action.NEXTPAGE}:
-                chat_data['page'] += 1
-            case {CallbackKey.ACTION: Action.CLOSE}:
-                return await self.__menuclose(update, context, **kwargs)
+                _, menupage.items = self.db.roles(chat_id)
             case _:
-                await kwargs['message'].edit_text('Something is wrong...', reply_markup=None)
-                self.__drop_context(context, CD)
-                return
-        await self.__menupage(update, context, **kwargs)
+                return await self.__menu_commons(update, context)
+        # refresh menu
+        await self.__menu_refresh(update, context)
 
     # --------------------------------------------------------------------------------
-    # common menu methods
-    @staticmethod
-    def __get_callback_query_data(update: Update, chat_data: CD) -> tuple[CallbackContent | None, str | None]:
-        """ Extract and validate inline callback query data """
-        if (callback_query := update.callback_query) is not None:
-            callback_query_data = (callback_query.data or '').replace(chat_data.get('menupattern', ''), '')
-            return chat_data.get('callback', {}).get(callback_query_data), callback_query_data
-        return None, None
-
-    @checkvars
-    async def __menu_is_opened(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]) -> bool:
-        """ Check if menu is already opened """
-        message = 'One menu is already opened. Close it before opening another one.'
-        if _is_opened := kwargs['chat_data'].get('menupattern', MenuPattern.EMPTY) != MenuPattern.EMPTY:
-            try:
-                if update.effective_message is None:
-                    raise BadRequest('Effective message is None')
-                await update.effective_message.reply_text(message)
-            except BadRequest:
-                await context.bot.send_message(kwargs['chat'].id, message)
-        return _is_opened
-
-    async def __menupage(self,
-                         update: Update,
-                         context: CCT,
-                         with_back_button: bool = True,
-                         **kwargs: Unpack[ValidatedContext]
-                         ):
-        """ Build next menu page """
-        chat_data = kwargs['chat_data']
-        message = kwargs['message']
-        # check page overflow
-        ITEMS_PER_PAGE = 4
-        MAXPAGE = math.ceil(len(chat_data['menulist']) / ITEMS_PER_PAGE) - 1
-        # if MAXPAGE == 0 and message.text == chat_data['menutext']:
-        #     chat_data['page'] = 0
-        #     return
-        if chat_data['page'] < 0:
-            chat_data['page'] = MAXPAGE
-        elif chat_data['page'] > MAXPAGE:
-            chat_data['page'] = 0
-        # build inline keyboard
-        start = chat_data['page'] * ITEMS_PER_PAGE
-        end = (chat_data['page'] + 1) * ITEMS_PER_PAGE
-        buttons = []
-        default_button_action = chat_data.get('default_button_action', None)
-        for item in chat_data['menulist'][start:end]:
-            # fill callback content
-            data = CallbackContent(action=default_button_action)
-            if chat_data['marker']:
-                data[CallbackKey.ACTIVE.value] = item.active
-                mark = (Emoji.ENABLED if getattr(item, 'active', False) else Emoji.DISABLED)
-            else:
-                mark = ''
-            if CallbackKey.CHAT_ID in item._fields:
-                data[CallbackKey.CHAT_ID.value] = item.chat_id
-            if CallbackKey.LISTENER_ID in item._fields:
-                data[CallbackKey.LISTENER_ID.value] = item.listener_id
-            if CallbackKey.ROLE in item._fields:
-                data[CallbackKey.ROLE.value] = item.role
-            buttons.append([button(f'{mark}{item.title}', chat_data, **data)])
-        buttons.extend((
-            (button('<<', chat_data, action=Action.PREVPAGE),
-             button('>>', chat_data, action=Action.NEXTPAGE)),
-            (button('Back', chat_data, action=chat_data['back_action']),) if with_back_button else (),
-            (button('Close', chat_data, action=Action.CLOSE),)
-        ))
-        markup = InlineKeyboardMarkup(buttons)
-        if MAXPAGE == 0 and message.text == chat_data['menutext'] and message.reply_markup == markup:
-            chat_data['page'] = 0
-            return
-        try:
-            await message.edit_text(chat_data['menutext'], reply_markup=markup)
-        except BadRequest:
-            await context.bot.send_message(kwargs['chat'].id,
-                                           'bugSignal GRANT panel',
-                                           reply_markup=markup)
-
-    async def __menuclose(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
-        """ Close menu """
-        await kwargs['message'].edit_text('Menu closed', reply_markup=None)
-        # await message.delete()
-        # release chat data
-        self.__drop_context(context, CD)
-
     # --------------------------------------------------------------------------------
-    @staticmethod
-    def __drop_context[DataSpec: UD | CD | BT](context: CCT, dtype: type[DataSpec]):
-        """ Release specified context """
-        if dtype is UD:
-            assert (data := context.user_data) is not None, LogRecord('RELEASE', 'User').DATA_IS_NONE
-            ...
-        elif dtype is CD:
-            assert (data := context.chat_data) is not None, LogRecord('RELEASE', 'Chat').DATA_IS_NONE
-            data.update(
-                back_action=None,
-                menupattern=MenuPattern.EMPTY,
-                menulist=(),
-                menutext='',
-                marker=False,
-                page=0,
-                callback={},
-                default_button_action=None,
-            )
-        elif dtype is BT:
-            assert (data := context.bot_data) is not None, LogRecord('RELEASE', 'Bot').DATA_IS_NONE
-            ...
-
     # --------------------------------------------------------------------------------
     async def _onerror(self, update: object, context: CCT):
         """ Error handler """
+        match context.error:
+            case MenuError() if isinstance(update, Update) and update.effective_message is not None:
+                try:
+                    await update.effective_message.edit_text(str(context.error), reply_markup=None)
+                except Exception as ex:
+                    self.logger.error(str(ex))
+        # TODO send error to DEVELOPER
         self.logger.error(str(context.error))
-
-
-
 
     # async def message(self, update: Update, context: CallbackContext):
     #     logging.debug('start command received')

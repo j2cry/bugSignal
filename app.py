@@ -3,7 +3,6 @@ import logging.handlers
 import os
 import pathlib
 import pytz
-# import yaml
 from telegram.ext import (
     Application,
     Defaults,
@@ -13,12 +12,9 @@ from telegram.ext import (
     MessageHandler
 )
 
+from menupage import MenuPattern
+from model import CCT, CT
 from service import BugSignalService
-from model import (
-    MenuPattern,
-    CCT,
-    CT
-)
 
 
 # TODO local logger configuration file
@@ -70,11 +66,10 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('fox', bot.fox))
     application.add_handler(CommandHandler('menu', bot.main_menu))
     application.add_handler(CallbackQueryHandler(bot.main_menu, MenuPattern.MAIN))
-    application.add_handler(CommandHandler('grant', bot.grant_menu))
-    application.add_handler(CallbackQueryHandler(bot.grant_menu, MenuPattern.GRANT))
-
-    # application.add_handler(CallbackQueryHandler(bot.chatlist, CallbackAction.CHATLIST))
-
+    application.add_handler(CallbackQueryHandler(bot.listeners_menu, MenuPattern.LISTENERS))
+    application.add_handler(CallbackQueryHandler(bot.chats_menu, MenuPattern.CHATS))
+    application.add_handler(CallbackQueryHandler(bot.subscriptions_menu, MenuPattern.SUBSCRIPTIONS))
+    application.add_handler(CallbackQueryHandler(bot.roles_menu, MenuPattern.ROLES))
 
     # add message handlers: Group policy Off required
     # application.add_handler(MessageHandler(None, bot.message))
