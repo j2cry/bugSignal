@@ -2,10 +2,11 @@ from __future__ import annotations
 import enum
 import math
 import typing
-
 from collections import namedtuple
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-from model import Emoji, RowLike
+
+from defaults import Emoji
+from model import RowLike
 
 
 class MenuPattern(enum.StrEnum):

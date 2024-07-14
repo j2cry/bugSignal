@@ -8,17 +8,10 @@ import typing
 
 from collections import namedtuple
 from telegram import Chat, User, Message
-from telegram.ext import CallbackContext, ContextTypes, ExtBot
+from telegram.ext import CallbackContext, ContextTypes, ExtBot, JobQueue
 
 if typing.TYPE_CHECKING:
     from menupage import InlineMenuPage
-
-
-# Telegram emoji
-class Emoji(enum.StrEnum):
-    ENABLED = '\u2714'
-    DISABLED = '\u2716'
-    DECLINED = '\u26D4'
 
 
 class UserRole(enum.IntFlag):
@@ -55,6 +48,7 @@ class ValidatedContext(typing.TypedDict):
     chat_data: CD
     bot_data: BD
     callback_data: str
+    job_queue: JobQueue[CCT]
 
 # --------------------------------------------------------------------------------
 # SQL insert/update row typing

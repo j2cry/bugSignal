@@ -64,6 +64,7 @@ if __name__ == '__main__':
     # add handlers
     application.add_handler(CommandHandler('start', bot.start))
     application.add_handler(CommandHandler('fox', bot.fox))
+    application.add_handler(CommandHandler('zombie', bot.zombie))
     application.add_handler(CommandHandler('menu', bot.main_menu))
     application.add_handler(CallbackQueryHandler(bot.main_menu, MenuPattern.MAIN))
     application.add_handler(CallbackQueryHandler(bot.listeners_menu, MenuPattern.LISTENERS))

@@ -1,22 +1,23 @@
-import typing
+import enum
 
-class LogRecord:
-    __slots__ = ('_args',)
-    EFFECTIVE_IS_NONE = '[%s] Effective %s is None'
-    DATA_IS_NONE = '[%s] %s data is None'
-    CALLBACK_IS_NONE = 'Callback has no query or query is invalid'
 
-    UNSECURE_OPERATION = 'User %s is trying to perform an unsafe operation: %s'
-    INSUFFICIENT_USERROLE = ''
+# Telegram emoji
+class Emoji(enum.StrEnum):
+    ENABLED = '\u2714'
+    DISABLED = '\u2716'
+    REJECTED = '\u26D4'
+    FOX = '🦊'
+    ZOMBIE = '🧟'
 
-    def __init__(self, *args: typing.Any):
-        self._args = args
 
-    def __getattribute__(self, name: str) -> typing.Any:
-        value = super().__getattribute__(name)
-        args = super().__getattribute__('_args')
-        return value % args
+class Notification:
+    COMMAND_REJECTED = f'{Emoji.REJECTED} Command rejected for %s.'
+    CHAT_INFORMATION_SAVED = f'{Emoji.ENABLED} Current chat information saved.'
+    MENU_CLOSED = 'Menu closed.'
+    MENU_OPENED = 'Menu is already opened.'
 
-# class Notification:
-#     CHAT_INFO_UPDATED = '\u2714 Done.'
-#     UNSECURE_OPERATION = '\u26D4 This operation is unsafe.'
+    LOG_COMMAND_REJECTED = 'User %s [%s] is trying to perform an unsafe operation.'
+    LOG_SENT_FROM_TO = '%s sent a fox to %s'
+
+    ERROR_MENU_PAGE = 'Menu page context is broken'
+    ERROR_MENU_CALLBACK = 'Menu callback content error'

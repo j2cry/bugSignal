@@ -3,13 +3,13 @@ import logging
 import os
 import random
 from contextlib import contextmanager
-from telegram import Update
+from telegram import Update, User
 from telegram.constants import ChatType
 from telegram.error import BadRequest
-from typing import Any, Callable, Concatenate, Coroutine, Unpack
+from typing import Any, Callable, Concatenate, Coroutine, Sequence, Unpack
 
 from database import Database
-from defaults import LogRecord
+from defaults import Notification, Emoji
 from menupage import (
     Action,
     Button,
@@ -21,7 +21,6 @@ from menupage import (
 from model import (
     UserRole,
     CustomTableRow,
-    Emoji,
     # UD, CD, BD, BT, CCT, CT,
     CCT,
     ValidatedContext
@@ -54,12 +53,13 @@ def checkvars[S: BugSignalService, T, **KW](
                  *args: KW.args,
                  **kwargs: KW.kwargs
                  ) -> Coroutine[Any, Any, T]:
-        assert (user := update.effective_user) is not None, LogRecord('CHECKVARS', 'user').EFFECTIVE_IS_NONE
-        assert (chat := update.effective_chat) is not None, LogRecord('CHECKVARS', 'chat').EFFECTIVE_IS_NONE
-        assert (message := update.effective_message) is not None, LogRecord('CHECKVARS', 'message').EFFECTIVE_IS_NONE
-        assert (user_data := context.user_data) is not None, LogRecord('CHECKVARS', 'User').DATA_IS_NONE
-        assert (chat_data := context.chat_data) is not None, LogRecord('CHECKVARS', 'Chat').DATA_IS_NONE
-        assert (bot_data := context.bot_data) is not None, LogRecord('CHECKVARS', 'Bot').DATA_IS_NONE
+        assert (user := update.effective_user) is not None, f'[checkvars] effective_user is None'
+        assert (chat := update.effective_chat) is not None, f'[checkvars] effective_chat is None'
+        assert (message := update.effective_message) is not None, f'[checkvars] effective_message is None'
+        assert (user_data := context.user_data) is not None, f'[checkvars] user_data is None'
+        assert (chat_data := context.chat_data) is not None, f'[checkvars] chat_data is None'
+        assert (bot_data := context.bot_data) is not None, f'[checkvars] bot_data is None'
+        assert (job_queue := context.job_queue) is not None, f'[checkvars] JobQueue is None'
         if (query := update.callback_query) is not None:
             callback_data = query.data or ''
         else:
@@ -71,7 +71,8 @@ def checkvars[S: BugSignalService, T, **KW](
             user_data=user_data,
             chat_data=chat_data,
             bot_data=bot_data,
-            callback_data=callback_data
+            callback_data=callback_data,
+            job_queue=job_queue,
         )
         return method(self, update, context, *args, **kwargs)
     return _wrapper
@@ -90,9 +91,9 @@ def allowed_for(roles: UserRole, admin: bool):
     def _permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
         async def _empty_handler(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T: ...
         async def _wrapper(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T:
-            assert (user := update.effective_user) is not None, LogRecord('PERMISSON', 'user').EFFECTIVE_IS_NONE
-            assert (chat := update.effective_chat) is not None, LogRecord('PERMISSON', 'chat').EFFECTIVE_IS_NONE
-            assert (message := update.effective_message) is not None, LogRecord('PERMISSION', 'message').EFFECTIVE_IS_NONE
+            assert (user := update.effective_user) is not None, f'[permission_check] effective_user is None'
+            assert (chat := update.effective_chat) is not None, f'[permission_check] effective_chat is None'
+            assert (message := update.effective_message) is not None, f'[permission_check] effective_message is None'
             # callback answer
             if (callback_query := update.callback_query) is not None:
                 await callback_query.answer('jap-jap-jap')
@@ -107,8 +108,8 @@ def allowed_for(roles: UserRole, admin: bool):
             if user_roles.intersection(roles) or (admin and chat.type != ChatType.PRIVATE and user in administrators):
                 return await method(self, update, context, *args, **kwargs)
             # restrict command execution
-            self.logger.warning(LogRecord(user.id, 'menu').UNSECURE_OPERATION)
-            await message.reply_text(f'{Emoji.DECLINED} Command rejected for {user.name}.')
+            self.logger.warning(Notification.LOG_COMMAND_REJECTED % (user.name, user.id))
+            await message.reply_text(Notification.COMMAND_REJECTED % user.name)
             return await _empty_handler(self, update, context, *args, **kwargs)
         return _wrapper
     return _permission_check
@@ -136,21 +137,37 @@ class BugSignalService:
         self.db.set_chat(kwargs['chat'].id,
                          title=kwargs['chat'].username or kwargs['chat'].effective_name or str(kwargs['chat'].id),
                          type=kwargs['chat'].type)
-        await kwargs['message'].reply_text(f'{Emoji.ENABLED} Current chat information saved.')  # NOTE hardcoded message
+        await kwargs['message'].reply_text(Notification.CHAT_INFORMATION_SAVED)
+
+    def __get_random_user(self, args: Sequence[str] | None, exclude_user: int) -> int:
+        """ Get random private user """
+        chats = self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
+        privates = tuple(chat.chat_id for chat in chats
+                         if chat.chat_id != exclude_user)
+        try:
+            if not args:
+                raise ValueError('No destination chat set')
+            chat_id = int(args[0])
+            if chat_id not in privates:
+                raise ValueError('Unknown private chat')
+        except ValueError:
+            chat_id = random.choice(privates)
+        return chat_id
 
     @checkvars
     async def fox(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Send fox emoji """
-        privates = tuple(chat.chat_id for chat in self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
-                         if chat.chat_id != kwargs['user'].id)
-        try:
-            chat_id = int(context.args[0])   # type: ignore
-            if chat_id not in privates:
-                raise ValueError()
-        except (IndexError, ValueError):
-            chat_id = random.choice(privates)
-        self.logger.info('%s sent a fox to %s', kwargs['user'].name, chat_id)
-        await context.bot.send_message(chat_id, '🦊')
+        chat_id = self.__get_random_user(context.args, kwargs['user'].id)
+        self.logger.info(Notification.LOG_SENT_FROM_TO % (kwargs['user'].name, chat_id))
+        await context.bot.send_message(chat_id, Emoji.FOX)
+
+    @checkvars
+    @allowed_for(UserRole.NECROMANCER, admin=False)
+    async def zombie(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Send zombie emoji """
+        chat_id = self.__get_random_user(context.args, kwargs['user'].id)
+        self.logger.info(Notification.LOG_SENT_FROM_TO % (kwargs['user'].name, chat_id))
+        await context.bot.send_message(chat_id, Emoji.ZOMBIE)
 
     # --------------------------------------------------------------------------------
     # Common inline menu
@@ -158,7 +175,7 @@ class BugSignalService:
     async def __menu_refresh(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Refresh menu page """
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
-            raise MenuError('Menu page context is broken')
+            raise MenuError(Notification.ERROR_MENU_PAGE)
         markup = menupage.markup
         if kwargs['message'].text == menupage.title and kwargs['message'].reply_markup == markup:
             return
@@ -172,7 +189,7 @@ class BugSignalService:
         """ Handle common inline menu callbacks: DO NOT USE AS DIRECT COMMAND HANDLER """
         chat_data = kwargs['chat_data']
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
-            raise MenuError('Menu page context is broken')
+            raise MenuError(Notification.ERROR_MENU_PAGE)
         # match inline query callback
         content = menupage.content(kwargs['callback_data'])
         match content:
@@ -190,13 +207,13 @@ class BugSignalService:
             # close menu
             case {CallbackKey.ACTION: Action.CLOSE}:
                 chat_data.pop('menupage')
-                return await kwargs['message'].edit_text('Menu closed', reply_markup=None)
+                return await kwargs['message'].edit_text(Notification.MENU_CLOSED, reply_markup=None)
             # already opened
             case {CallbackKey.ACTION: None}:
-                return await kwargs['message'].reply_text('Menu is already opened.')
+                return await kwargs['message'].reply_text(Notification.MENU_OPENED)
             # unknown content
             case _:
-                raise MemoryError('Menu callback content error')
+                raise MenuError(Notification.ERROR_MENU_CALLBACK)
         # refresh menu
         await self.__menu_refresh(update, context)
 
@@ -210,7 +227,7 @@ class BugSignalService:
         # first or back open menu
         if (menupage := chat_data.get('menupage')) is None:
             if kwargs['callback_data']:
-                raise MenuError('Menu page context is broken')
+                raise MenuError(Notification.ERROR_MENU_PAGE)
             # build menu
             menupage = InlineMenuPage(
                 pattern=MenuPattern.MAIN,
@@ -236,11 +253,12 @@ class BugSignalService:
             except BadRequest:
                 await context.bot.send_message(kwargs['chat'].id, menupage.title, reply_markup=markup)
             return
+        return await self.__menu_commons(update, context)
         # match inline query callback
-        content = menupage.content(kwargs['callback_data'])
-        match content:
-            case _:
-                return await self.__menu_commons(update, context)
+        # content = menupage.content(kwargs['callback_data'])
+        # match content:
+        #     case _:
+        #         return await self.__menu_commons(update, context)
         # refresh menu
         # await self.__menu_refresh(update, context)
 
@@ -251,7 +269,7 @@ class BugSignalService:
     async def listeners_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Handle LISTENERS menu callback """
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
-            raise MenuError('Menu page context is broken')
+            raise MenuError(Notification.ERROR_MENU_PAGE)
         content = menupage.content(kwargs['callback_data'])
         # match inline query callback
         match content:
@@ -286,7 +304,7 @@ class BugSignalService:
     async def chats_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Handle CHATS menu callback """
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
-            raise MenuError('Menu page context is broken')
+            raise MenuError(Notification.ERROR_MENU_PAGE)
         content = menupage.content(kwargs['callback_data'])
         # match inline query callback
         match content:
@@ -321,7 +339,7 @@ class BugSignalService:
     async def subscriptions_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Handle SUBSCRIPTIONS menu callback """
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
-            raise MenuError('Menu page context is broken')
+            raise MenuError(Notification.ERROR_MENU_PAGE)
         content = menupage.content(kwargs['callback_data'])
         # match inline query callback
         match content:
@@ -370,7 +388,7 @@ class BugSignalService:
     async def roles_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Handle ROLES menu callback """
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
-            raise MenuError('Menu page context is broken')
+            raise MenuError(Notification.ERROR_MENU_PAGE)
         content = menupage.content(kwargs['callback_data'])
         # match inline query callback
         match content:
