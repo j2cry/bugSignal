@@ -6,6 +6,7 @@ import sqlalchemy.dialects.mssql as mssql
 import sqlalchemy.dialects.postgresql as psql
 import typing
 
+from collections import namedtuple
 from telegram import Chat, User, Message
 from telegram.ext import CallbackContext, ContextTypes, ExtBot
 
@@ -18,6 +19,11 @@ class Emoji(enum.StrEnum):
 
 # --------------------------------------------------------------------------------
 # callback data typing
+class MenuPattern(enum.StrEnum):
+    EMPTY = ''
+    MAIN = enum.auto()
+    GRANT = enum.auto()
+
 class Action(enum.IntEnum):
     CLOSE = enum.auto()
     MENU = enum.auto()
@@ -28,11 +34,13 @@ class Action(enum.IntEnum):
     CHATS = enum.auto()
     LISTENERS = enum.auto()
     SUBSCRIPTIONS = enum.auto()
+    ROLES = enum.auto()
 
 class CallbackKey(enum.StrEnum):
     ACTION = enum.auto()
     CHAT_ID = enum.auto()
     LISTENER_ID = enum.auto()
+    ROLE = enum.auto()
     ACTIVE = enum.auto()
 
 class CallbackContent(typing.TypedDict):
@@ -45,11 +53,18 @@ CallbackProtocol = typing.MutableMapping[str | None, CallbackContent]
 
 # --------------------------------------------------------------------------------
 # bot context typing
+class RowLike(typing.Protocol):
+    @property
+    def _fields(self) -> tuple[str, ...]: ...
+    def _asdict(self) -> dict[str, typing.Any]: ...
+    def __getattr__(self, name: str) -> typing.Any: ...
+
 BT = ExtBot[None]
 UD = typing.TypedDict('UD', {})
 CD = typing.TypedDict('CD', {
     'back_action': Action | None,           # action for BACK button
-    'menulist': typing.Sequence[sa.Row],    # NOTE todo type hints?
+    'menupattern': MenuPattern,
+    'menulist': typing.Sequence[RowLike],    # NOTE todo type hints?
     'menutext': str,
     'marker': bool,                         # marker for printing ckecks before button text
     'page': int,                            # current menu page
@@ -73,6 +88,7 @@ class ValidatedContext(typing.TypedDict):
 class ChatValues(typing.TypedDict):
     title: typing.NotRequired[str]
     type: typing.NotRequired[str]
+    role: typing.NotRequired[int]
     active: typing.NotRequired[bool]
 
 class ListenerValues(typing.TypedDict):
@@ -98,6 +114,17 @@ class UserRole(enum.IntFlag):
 
 # --------------------------------------------------------------------------------
 # SQL definitions
+class CustomTableRow:
+    def __new__(cls, **kwargs) -> RowLike:
+        _class = namedtuple('_CustomTableRow', kwargs.keys())
+        instance = _class(**kwargs)
+        # setattr(instance, '__getattr__', cls.__getattr__)
+        # instance.__getattr__ = cls.__getattr__
+        return instance     # type: ignore
+
+    def __getattr__(self, name: str) -> typing.Any:
+        return self.__getattribute__(name)
+
 class _ListenerTable(typing.Protocol):
     """ Specific source for receiving messages """
     __tablename__: str
@@ -105,10 +132,18 @@ class _ListenerTable(typing.Protocol):
     title: sa.Column[str]
     classname: sa.Column[str]
     parameters: sa.Column[str]
-    # polling: sa.Column[int | dt.time]   # HOWTO ???
     active: sa.Column[bool]
     created: sa.Column[dt.datetime]
     updated: sa.Column[dt.datetime]
+class ListenerTableRow(RowLike, typing.Protocol):
+    """ Listener table row protocol """
+    listener_id: int
+    title: str
+    classname: str
+    parameters: str
+    active: bool
+    created: dt.datetime
+    updated: dt.datetime
 
 class _ChatTable(typing.Protocol):
     """ Telegram chat (group or private) """
@@ -120,6 +155,16 @@ class _ChatTable(typing.Protocol):
     active: sa.Column[bool]
     created: sa.Column[dt.datetime]
     updated: sa.Column[dt.datetime]
+class ChatTableRow(RowLike, typing.Protocol):
+    """ Chat table row protocol """
+    chat_id: int
+    title: str
+    role: int
+    type: str
+    active: bool
+    created: dt.datetime
+    updated: dt.datetime
+
 
 class _SubscriptionTable(typing.Protocol):
     """ Chat subscriptions to listeners """
@@ -130,11 +175,20 @@ class _SubscriptionTable(typing.Protocol):
     active: sa.Column[bool]
     created: sa.Column[dt.datetime]
     updated: sa.Column[dt.datetime]
+class SubscriptionTableRow(RowLike, typing.Protocol):
+    """ Chat subscriptions table row protocol """
+    subscription_id: int
+    chat_id: int
+    listener_id: int
+    active: bool
+    created: dt.datetime
+    updated: dt.datetime
 
 ListenerTable: typing.TypeAlias = type[_ListenerTable]
 ChatTable: typing.TypeAlias = type[_ChatTable]
 SubscriptionTable: typing.TypeAlias = type[_SubscriptionTable]
 AnyTable = ListenerTable | ChatTable | SubscriptionTable
+AnyTableRow = ListenerTableRow | ChatTableRow | SubscriptionTableRow
 
 
 def definitions_loader(dialect: str) -> tuple[ListenerTable,

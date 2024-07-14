@@ -16,20 +16,20 @@ from model import (
     Action,
     CallbackKey,
     CallbackContent,
-    CallbackProtocol,
     Emoji,
+    MenuPattern,
     UD, CD, BD, BT, CCT, CT,
     ValidatedContext
 )
 
 
 def button(name: str,
-           data: CallbackProtocol,
+           chat_data: CD,
            **kwargs: Unpack[CallbackContent],
            ) -> InlineKeyboardButton:
     hashkey = str(hash(str(kwargs)))
-    data[hashkey] = kwargs
-    return InlineKeyboardButton(name, callback_data=hashkey)
+    chat_data['callback'][hashkey] = kwargs
+    return InlineKeyboardButton(name, callback_data=f'{chat_data["menupattern"]}{hashkey}')
 
 
 # def logcommand[S: BugSignalService, T](method: Callable[[S, Update, CCT], Coroutine[Any, Any, T]]):
@@ -140,7 +140,7 @@ class BugSignalService:
     @checkvars
     async def fox(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Send fox emoji """
-        privates = tuple(chat.chat_id for chat in self.db.chats(active_only=True, of_types='private')
+        privates = tuple(chat.chat_id for chat in self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
                          if chat.chat_id != kwargs['user'].id)
         try:
             chat_id = int(context.args[0])   # type: ignore
@@ -152,41 +152,36 @@ class BugSignalService:
         await context.bot.send_message(chat_id, '🦊')
 
     # --------------------------------------------------------------------------------
-    # Inline menu handlers
-    # Be careful: all menu methods must have the same permissions decoration!
+    # Inline main menu
     @checkvars
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
     async def main_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Show main menu """
-        self.__drop_context(context, CD)
-        chat = kwargs['chat']
-        message = kwargs['message']
-        chat_data = kwargs['chat_data']
-        # build menu
-        callback = {}
-        menu = InlineKeyboardMarkup(((
-            button('Chats', callback, action=Action.CHATS),
-            button('Listeners', callback, action=Action.LISTENERS),
-        ), (
-            button('Subscriptions', callback, action=Action.SUBSCRIPTIONS),
-        ), (
-            button('Close', callback, action=Action.CLOSE),
-        ),))
-        chat_data['callback'] = callback
-        try:
-            await message.edit_text('bugSignal admin panel', reply_markup=menu)
-        except BadRequest:
-            await context.bot.send_message(chat.id, 'bugSignal admin panel', reply_markup=menu)
-
-    @checkvars
-    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
-    async def main_menu_callback(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
-        """ Parse callback data """
-        assert (callback_query := update.callback_query) is not None, LogRecord.CALLBACK_IS_NONE
-        await callback_query.answer('jap-jap-jap')
         chat_data = kwargs['chat_data']
         # get callback saved data
-        data = chat_data.get('callback', {}).get(callback_query.data)
+        data, hashkey = self.__get_callback_query_data(update, chat_data)
+        # first or back menu open
+        if (data or {}).get(CallbackKey.ACTION) in {Action.MENU, None}:
+            # check that menu is opened FIXME
+            # if await self.__menu_is_opened(update, context):
+            #     return
+            # build menu
+            self.__drop_context(context, CD)
+            chat_data['menupattern'] = MenuPattern.MAIN
+            menu = InlineKeyboardMarkup(((
+                button('Chats', chat_data, action=Action.CHATS),
+                button('Listeners', chat_data, action=Action.LISTENERS),
+            ), (
+                button('Subscriptions', chat_data, action=Action.SUBSCRIPTIONS),
+            ), (
+                button('Close', chat_data, action=Action.CLOSE),
+            ),))
+            try:
+                await kwargs['message'].edit_text('bugSignal admin panel', reply_markup=menu)
+            except BadRequest:
+                await context.bot.send_message(kwargs['chat'].id, 'bugSignal admin panel', reply_markup=menu)
+            return
+        # match inline query callback
         match data:
             case {CallbackKey.ACTION: Action.MENU}:
                 return await self.main_menu(update, context)
@@ -269,18 +264,109 @@ class BugSignalService:
         await self.__menupage(update, context, **kwargs)
 
     # --------------------------------------------------------------------------------
+    # Inline grant permissions menu
+    @checkvars
+    async def grant_menu(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Show grant permissions menu
+
+        This was implemented as demo of menu building
+        """
+        # callback answer NOTE DEBUG
+        if (callback_query := update.callback_query) is not None:
+            await callback_query.answer('jap-jap-jap')
+        chat_data = kwargs['chat_data']
+        # get callback saved data
+        data, hashkey = self.__get_callback_query_data(update, chat_data)
+        # first or back menu open
+        if (data or {}).get(CallbackKey.ACTION) in {Action.MENU, None}:
+            # check that menu is opened FIXME
+            # if await self.__menu_is_opened(update, context):
+            #     return
+            # build menu
+            self.__drop_context(context, CD)
+            chat_data['menupattern'] = MenuPattern.GRANT
+            chat_data.update(
+                back_action=Action.CLOSE,
+                default_button_action=Action.ROLES,
+                menulist=self.db.chats(active_only=True, of_types=ChatType.PRIVATE),
+                menutext='Available private chats',
+                page=0,
+            )
+            return await self.__menupage(update, context, with_back_button=False, **kwargs)
+        # match inline query callback
+        match data:
+            case {CallbackKey.ACTION: Action.ROLES,
+                  CallbackKey.CHAT_ID: int(chat_id)}:
+                username, roles = self.db.roles(chat_id)
+                chat_data.update(
+                    back_action=Action.MENU,
+                    default_button_action=Action.SWITCH,
+                    menulist=roles,
+                    menutext=f'User roles for {username}',
+                    marker=True,
+                    page=0,
+                )
+            case {CallbackKey.ACTION: Action.SWITCH,
+                  CallbackKey.CHAT_ID: int(chat_id),
+                  CallbackKey.ROLE: UserRole(role)}:
+                # update role
+                self.logger.debug('Add/remove PRIVATE role')
+                self.db.set_chat(chat_id, role=role)
+                _, roles = self.db.roles(chat_id)
+                chat_data['menulist'] = roles
+
+            # basic menu commands
+            case {CallbackKey.ACTION: Action.PREVPAGE}:
+                chat_data['page'] -= 1
+            case {CallbackKey.ACTION: Action.NEXTPAGE}:
+                chat_data['page'] += 1
+            case {CallbackKey.ACTION: Action.CLOSE}:
+                return await self.__menuclose(update, context, **kwargs)
+            case _:
+                await kwargs['message'].edit_text('Something is wrong...', reply_markup=None)
+                self.__drop_context(context, CD)
+                return
+        await self.__menupage(update, context, **kwargs)
+
+    # --------------------------------------------------------------------------------
     # common menu methods
-    async def __menupage(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+    @staticmethod
+    def __get_callback_query_data(update: Update, chat_data: CD) -> tuple[CallbackContent | None, str | None]:
+        """ Extract and validate inline callback query data """
+        if (callback_query := update.callback_query) is not None:
+            callback_query_data = (callback_query.data or '').replace(chat_data.get('menupattern', ''), '')
+            return chat_data.get('callback', {}).get(callback_query_data), callback_query_data
+        return None, None
+
+    @checkvars
+    async def __menu_is_opened(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]) -> bool:
+        """ Check if menu is already opened """
+        message = 'One menu is already opened. Close it before opening another one.'
+        if _is_opened := kwargs['chat_data'].get('menupattern', MenuPattern.EMPTY) != MenuPattern.EMPTY:
+            try:
+                if update.effective_message is None:
+                    raise BadRequest('Effective message is None')
+                await update.effective_message.reply_text(message)
+            except BadRequest:
+                await context.bot.send_message(kwargs['chat'].id, message)
+        return _is_opened
+
+    async def __menupage(self,
+                         update: Update,
+                         context: CCT,
+                         with_back_button: bool = True,
+                         **kwargs: Unpack[ValidatedContext]
+                         ):
         """ Build next menu page """
         chat_data = kwargs['chat_data']
         message = kwargs['message']
         # check page overflow
         ITEMS_PER_PAGE = 4
         MAXPAGE = math.ceil(len(chat_data['menulist']) / ITEMS_PER_PAGE) - 1
-        if MAXPAGE == 0 and message.text == chat_data['menutext']:
-            chat_data['page'] = 0
-            return
-        elif chat_data['page'] < 0:
+        # if MAXPAGE == 0 and message.text == chat_data['menutext']:
+        #     chat_data['page'] = 0
+        #     return
+        if chat_data['page'] < 0:
             chat_data['page'] = MAXPAGE
         elif chat_data['page'] > MAXPAGE:
             chat_data['page'] = 0
@@ -288,9 +374,9 @@ class BugSignalService:
         start = chat_data['page'] * ITEMS_PER_PAGE
         end = (chat_data['page'] + 1) * ITEMS_PER_PAGE
         buttons = []
-        callback = {}
-        default_button_action = chat_data.pop('default_button_action', None)
+        default_button_action = chat_data.get('default_button_action', None)
         for item in chat_data['menulist'][start:end]:
+            # fill callback content
             data = CallbackContent(action=default_button_action)
             if chat_data['marker']:
                 data[CallbackKey.ACTIVE.value] = item.active
@@ -301,15 +387,25 @@ class BugSignalService:
                 data[CallbackKey.CHAT_ID.value] = item.chat_id
             if CallbackKey.LISTENER_ID in item._fields:
                 data[CallbackKey.LISTENER_ID.value] = item.listener_id
-            buttons.append([button(f'{mark}{item.title}', callback, **data)])
+            if CallbackKey.ROLE in item._fields:
+                data[CallbackKey.ROLE.value] = item.role
+            buttons.append([button(f'{mark}{item.title}', chat_data, **data)])
         buttons.extend((
-            (button('<<', callback, action=Action.PREVPAGE),
-             button('>>', callback, action=Action.NEXTPAGE)),
-            (button('Back', callback, action=chat_data['back_action']),),
-            (button('Close', callback, action=Action.CLOSE),)
+            (button('<<', chat_data, action=Action.PREVPAGE),
+             button('>>', chat_data, action=Action.NEXTPAGE)),
+            (button('Back', chat_data, action=chat_data['back_action']),) if with_back_button else (),
+            (button('Close', chat_data, action=Action.CLOSE),)
         ))
-        chat_data['callback'] = callback
-        await message.edit_text(chat_data['menutext'], reply_markup=InlineKeyboardMarkup(buttons))
+        markup = InlineKeyboardMarkup(buttons)
+        if MAXPAGE == 0 and message.text == chat_data['menutext'] and message.reply_markup == markup:
+            chat_data['page'] = 0
+            return
+        try:
+            await message.edit_text(chat_data['menutext'], reply_markup=markup)
+        except BadRequest:
+            await context.bot.send_message(kwargs['chat'].id,
+                                           'bugSignal GRANT panel',
+                                           reply_markup=markup)
 
     async def __menuclose(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Close menu """
@@ -329,6 +425,7 @@ class BugSignalService:
             assert (data := context.chat_data) is not None, LogRecord('RELEASE', 'Chat').DATA_IS_NONE
             data.update(
                 back_action=None,
+                menupattern=MenuPattern.EMPTY,
                 menulist=(),
                 menutext='',
                 marker=False,

@@ -15,6 +15,7 @@ from telegram.ext import (
 
 from service import BugSignalService
 from model import (
+    MenuPattern,
     CCT,
     CT
 )
@@ -68,7 +69,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', bot.start))
     application.add_handler(CommandHandler('fox', bot.fox))
     application.add_handler(CommandHandler('menu', bot.main_menu))
-    application.add_handler(CallbackQueryHandler(bot.main_menu_callback, ))
+    application.add_handler(CallbackQueryHandler(bot.main_menu, MenuPattern.MAIN))
+    application.add_handler(CommandHandler('grant', bot.grant_menu))
+    application.add_handler(CallbackQueryHandler(bot.grant_menu, MenuPattern.GRANT))
 
     # application.add_handler(CallbackQueryHandler(bot.chatlist, CallbackAction.CHATLIST))
 

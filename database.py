@@ -5,10 +5,12 @@ import typing
 
 from model import (
     UserRole,
-    ListenerTable,
-    ChatTable,
-    SubscriptionTable,
-    AnyTable,
+    CustomTableRow,
+    RowLike,
+    ListenerTable, ListenerTableRow,
+    ChatTable, ChatTableRow,
+    SubscriptionTable, SubscriptionTableRow,
+    AnyTable, AnyTableRow,
     definitions_loader,
     ChatValues,
     ListenerValues,
@@ -76,7 +78,7 @@ class Database:
     def chats(self,
               active_only: bool = False,
               of_types: str | typing.Sequence[str] | None = None,
-              ) -> typing.Sequence[sa.Row]:
+              ) -> typing.Sequence[ChatTableRow]:
         """ Request for chats """
         clauses = [CHAT.active.in_((True, active_only))]
         if of_types is not None:
@@ -84,24 +86,24 @@ class Database:
         query = sa.select(CHAT).where(*clauses).order_by(CHAT.chat_id)
         self.__logger.debug(str(query))
         with self.__engine.connect() as conn:
-            return tuple(conn.execute(query).all())
+            return tuple(conn.execute(query).all()) # type: ignore
 
     def set_chat(self, chat_id: int, **values: typing.Unpack[ChatValues]):
         """ Insert or update chat """
         self.__insert_or_update(CHAT, CHAT.chat_id == chat_id, chat_id=chat_id, **values)
 
-    def listeners(self, active_only: bool = False) -> typing.Sequence[sa.Row]:
+    def listeners(self, active_only: bool = False) -> typing.Sequence[ListenerTableRow]:
         """ Request for all listeners for specified chat """
         query = sa.select(LISTENER).where(LISTENER.active.in_((True, active_only))).order_by(LISTENER.listener_id)
         self.__logger.debug(str(query))
         with self.__engine.connect() as conn:
-            return tuple(conn.execute(query).all())
+            return tuple(conn.execute(query).all()) # type: ignore
 
     def set_listener(self, listener_id: int, **values: typing.Unpack[ListenerValues]):
         """ Insert or update listener """
         self.__insert_or_update(LISTENER, LISTENER.listener_id == listener_id, **values)
 
-    def subscriptions(self, chat_id: int) -> tuple[str, typing.Sequence[sa.Row]]:
+    def subscriptions(self, chat_id: int) -> tuple[str, typing.Sequence[SubscriptionTableRow]]:
         """"""
         with self.__engine.connect() as conn:
             query = sa.select(CHAT.title).where(CHAT.chat_id == chat_id)
@@ -124,7 +126,7 @@ class Database:
             ).order_by(LISTENER.title)
 
             self.__logger.debug(str(query))
-            return chat.title, tuple(conn.execute(query).all())
+            return chat.title, tuple(conn.execute(query).all()) # type: ignore
 
     @typing.overload
     def set_subscription(self, subscription_id: int, **values: typing.Unpack[SubscriptionValues]) -> None: ...
@@ -143,9 +145,23 @@ class Database:
                                         listener_id=listener_id,
                                         **values)
 
-    def chat(self, chat_id: int) -> sa.Row | None:
+    def chat(self, chat_id: int) -> ChatTableRow | None:
         """ Request for specified chat info """
         query = sa.select(CHAT).where(CHAT.chat_id == chat_id)
         self.__logger.debug(str(query))
         with self.__engine.connect() as conn:
-            return conn.execute(query).first()
+            return conn.execute(query).first()  # type: ignore
+
+    def roles(self, chat_id: int) -> tuple[str, typing.Sequence[RowLike]]:
+        # get stored user roles
+        if (stored_chat := self.chat(chat_id)) is None:
+            raise ValueError('Incorrect stored chat')
+        # build roles list
+        user_roles = UserRole(stored_chat.role)
+        return (stored_chat.title,
+                tuple(CustomTableRow(chat_id=stored_chat.chat_id,
+                                     title=role.name,
+                                     role=user_roles ^ role,
+                                     active=role in user_roles)
+                      for role in UserRole)
+                )
