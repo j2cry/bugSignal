@@ -191,6 +191,12 @@ class BugSignalService:
             case {CallbackKey.ACTION: Action.CLOSE}:
                 chat_data.pop('menupage')
                 return await kwargs['message'].edit_text('Menu closed', reply_markup=None)
+            # already opened
+            case {CallbackKey.ACTION: None}:
+                return await kwargs['message'].reply_text('Menu is already opened.')
+            # unknown content
+            case _:
+                raise MemoryError('Menu callback content error')
         # refresh menu
         await self.__menu_refresh(update, context)
 
