@@ -1,15 +1,25 @@
 from __future__ import annotations
+import asyncio
+import datetime as dt
 import logging
 import os
 import random
+import signal
 from contextlib import contextmanager
-from telegram import Update, User
+from telegram import Update
+from telegram.ext import Job
 from telegram.constants import ChatType
 from telegram.error import BadRequest
 from typing import Any, Callable, Concatenate, Coroutine, Sequence, Unpack
 
 from database import Database
-from defaults import Notification, Emoji
+from defaults import (
+    Configuration,
+    Emoji,
+    Environ,
+    Notification,
+    DEFAULT
+)
 from menupage import (
     Action,
     Button,
@@ -96,7 +106,7 @@ def allowed_for(roles: UserRole, admin: bool):
             assert (message := update.effective_message) is not None, f'[permission_check] effective_message is None'
             # callback answer
             if (callback_query := update.callback_query) is not None:
-                await callback_query.answer('jap-jap-jap')
+                await callback_query.answer(Notification.MESSAGE_QUERY_ANSWER)
             # get stored user role
             user_roles = (set(UserRole(stored_chat.role))
                           if (stored_chat := self.db.chat(user.id)) is not None
@@ -109,20 +119,21 @@ def allowed_for(roles: UserRole, admin: bool):
                 return await method(self, update, context, *args, **kwargs)
             # restrict command execution
             self.logger.warning(Notification.LOG_COMMAND_REJECTED % (user.name, user.id))
-            await message.reply_text(Notification.COMMAND_REJECTED % user.name)
+            await message.reply_text(Notification.MESSAGE_COMMAND_REJECTED % user.name)
             return await _empty_handler(self, update, context, *args, **kwargs)
         return _wrapper
     return _permission_check
 
 
 class BugSignalService:
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger, config: Configuration = DEFAULT):
         # load credentials
         os.environ.get('BUGSIGNAL_TOKEN')
         self.logger = logger
-        self.db = Database(os.environ['BUGSIGNAL_SQL_CONNECTION_STRING'],
-                           schema=os.environ['BUGSIGNAL_SQL_CONNECTION_SCHEMA'],
+        self.db = Database(os.environ[Environ.SQL_CONNECTION_STRING],
+                           schema=config['sqlschema'],
                            logger=logger)
+        self.config = config
 
     @contextmanager
     def run(self, *args, **kwargs):
@@ -137,22 +148,7 @@ class BugSignalService:
         self.db.set_chat(kwargs['chat'].id,
                          title=kwargs['chat'].username or kwargs['chat'].effective_name or str(kwargs['chat'].id),
                          type=kwargs['chat'].type)
-        await kwargs['message'].reply_text(Notification.CHAT_INFORMATION_SAVED)
-
-    def __get_random_user(self, args: Sequence[str] | None, exclude_user: int) -> int:
-        """ Get random private user """
-        chats = self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
-        privates = tuple(chat.chat_id for chat in chats
-                         if chat.chat_id != exclude_user)
-        try:
-            if not args:
-                raise ValueError('No destination chat set')
-            chat_id = int(args[0])
-            if chat_id not in privates:
-                raise ValueError('Unknown private chat')
-        except ValueError:
-            chat_id = random.choice(privates)
-        return chat_id
+        await kwargs['message'].reply_text(Notification.MESSAGE_CHAT_INFORMATION_SAVED)
 
     @checkvars
     async def fox(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
@@ -168,6 +164,47 @@ class BugSignalService:
         chat_id = self.__get_random_user(context.args, kwargs['user'].id)
         self.logger.info(Notification.LOG_SENT_FROM_TO % (kwargs['user'].name, chat_id))
         await context.bot.send_message(chat_id, Emoji.ZOMBIE)
+
+    @checkvars
+    @allowed_for(UserRole.ACTIVE, admin=False)
+    async def check(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Force check all listeners for updates """
+        # TODO сделать параметризацию?
+        message = await kwargs['message'].reply_text(Notification.MESSAGE_CHECK_LISTENERS)
+        tasks = []
+        for job in kwargs['job_queue'].jobs():
+            if (job.name or '').startswith('listener'):
+                tasks.append(asyncio.create_task(job.run(context.application)))
+                # await job.run(context.application)
+        if tasks:
+            await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
+        await message.reply_text(Notification.MESSAGE_DONE)
+
+    @checkvars
+    @allowed_for(UserRole.ACTIVE, admin=False)
+    async def jobstate(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Get current bugSignal state """
+        def _jobformat(job: Job[CCT]):
+            """ Return formatted job schedule """
+            next_t = job.next_t.replace(microsecond=0, tzinfo=None) if job.next_t else None
+            return f'{getattr(job.data, "name", job.name)} {next_t}'
+        TIMESTAMP = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        STATE = f'[{TIMESTAMP}] Self state:\n' + '\n'.join(map(_jobformat, kwargs['job_queue'].jobs()))
+        await kwargs['message'].reply_text(STATE)
+
+    @checkvars
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
+    async def actualize(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Actualize listener jobs """
+        # TODO
+
+    @checkvars
+    @allowed_for(UserRole.MASTER, admin=False)
+    async def shutdown(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Get current bugSignal state """
+        self.logger.info(Notification.LOG_SHUTDOWN, kwargs['user'].name, kwargs['user'].id)
+        await kwargs['message'].reply_text(Notification.MESSAGE_SHUTDOWN)
+        kwargs['job_queue'].run_once(self._onclose, when=self.config['timeout']['close'])
 
     # --------------------------------------------------------------------------------
     # Common inline menu
@@ -207,10 +244,10 @@ class BugSignalService:
             # close menu
             case {CallbackKey.ACTION: Action.CLOSE}:
                 chat_data.pop('menupage')
-                return await kwargs['message'].edit_text(Notification.MENU_CLOSED, reply_markup=None)
+                return await kwargs['message'].edit_text(Notification.MESSAGE_MENU_CLOSED, reply_markup=None)
             # already opened
             case {CallbackKey.ACTION: None}:
-                return await kwargs['message'].reply_text(Notification.MENU_OPENED)
+                return await kwargs['message'].reply_text(Notification.MESSAGE_MENU_OPENED)
             # unknown content
             case _:
                 raise MenuError(Notification.ERROR_MENU_CALLBACK)
@@ -433,7 +470,7 @@ class BugSignalService:
 
     # --------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------
-    # --------------------------------------------------------------------------------
+    # event handlers
     async def _onerror(self, update: object, context: CCT):
         """ Error handler """
         match context.error:
@@ -444,6 +481,34 @@ class BugSignalService:
                     self.logger.error(str(ex))
         # TODO send error to DEVELOPER
         self.logger.error(str(context.error))
+
+    async def _onstart(self, context: CCT):
+        """ On start event """
+        # TODO
+
+    async def _onclose(self, context: CCT):
+        """ On shutdown event """
+        if context.job_queue is not None:
+            context.job_queue.scheduler.remove_all_jobs()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    # --------------------------------------------------------------------------------
+    # private methods
+    def __get_random_user(self, args: Sequence[str] | None, exclude_user: int) -> int:
+        """ Get random private user """
+        chats = self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
+        privates = tuple(chat.chat_id for chat in chats
+                         if chat.chat_id != exclude_user)
+        try:
+            if not args:
+                raise ValueError('No destination chat set')
+            chat_id = int(args[0])
+            if chat_id not in privates:
+                raise ValueError('Unknown private chat')
+        except ValueError:
+            chat_id = random.choice(privates)
+        return chat_id
+
 
     # async def message(self, update: Update, context: CallbackContext):
     #     logging.debug('start command received')
