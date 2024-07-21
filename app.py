@@ -66,7 +66,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('fox', bot.fox))
     application.add_handler(CommandHandler('zombie', bot.zombie))
     application.add_handler(CommandHandler('check', bot.check))
-    application.add_handler(CommandHandler('jobstate', bot.jobstate))
+    application.add_handler(CommandHandler('state', bot.jobstate))
     application.add_handler(CommandHandler('actualize', bot.actualize))
     application.add_handler(CommandHandler('shutdown', bot.shutdown))
     application.add_handler(CommandHandler('menu', bot.main_menu))

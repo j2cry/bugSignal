@@ -43,7 +43,9 @@ class Configuration(typing.TypedDict):
     logger: LoggerConfig
     timeout: TimeoutConfig
     timezone: str
-    sqlschema: str | None
+    sqlSchema: str | None
+    actualizeInterval: int | float
+    retryInterval: int | float
 
 ANY_CONFIG_TYPE: typing.TypeAlias = Configuration | LoggerConfig | TimeoutConfig
 
@@ -66,7 +68,9 @@ DEFAULT = Configuration(
         start=2.5,
         close=5,
     ),
-    sqlschema='bugsignal',
+    sqlSchema='bugsignal',
+    actualizeInterval=86400,
+    retryInterval=15,
 )
 
 def build_configuration(cf: typing.Mapping[typing.Any, typing.Any]) -> Configuration:
@@ -97,9 +101,14 @@ class Notification:
     MESSAGE_SOMETHING_WRONG = "I think i'm gonna throw up 🤢. Check my log please."
     MESSAGE_SHUTDOWN = 'Shutdown job was scheduled. See ya! 👋'
 
-    LOG_COMMAND_REJECTED = 'User %s [%s] is trying to perform an unsafe operation.'
+    LOG_NO_UPDATES = 'Listener %s [%s] has no updates'
+    LOG_JOB_SCHEDULED = 'Job %s scheduled @ %s'
+    LOG_JOB_UPDATED = 'Job %s updated. Next run @ %s'
+    LOG_COMMAND_REJECTED = 'User %s [%s] is trying to perform an unsafe operation'
     LOG_SENT_FROM_TO = '%s sent a fox to %s'
     LOG_SHUTDOWN = 'The user %s [%s] initiated the shutdown of the service'
 
     ERROR_MENU_PAGE = 'Menu page context is broken'
     ERROR_MENU_CALLBACK = 'Menu callback content error'
+    ERROR_LISTENER_PROTOCOL = 'Listener %s [%s] has incompatible protocol'
+    ERROR_TRACEBACK = '[%s]: %s\n%s'

@@ -145,6 +145,13 @@ class Database:
                                         listener_id=listener_id,
                                         **values)
 
+    def subscribers(self, listener_id: int, *, active_only: bool = False) -> typing.Sequence[ChatTableRow]:
+        """ Get listener subscribers """
+        query = sa.select(CHAT).join(SUBSCRIPTION).where(SUBSCRIPTION.listener_id == listener_id)
+        self.__logger.debug(str(query))
+        with self.__engine.connect() as conn:
+            return conn.execute(query).all()    # type: ignore
+
     def chat(self, chat_id: int) -> ChatTableRow | None:
         """ Request for specified chat info """
         query = sa.select(CHAT).where(CHAT.chat_id == chat_id)

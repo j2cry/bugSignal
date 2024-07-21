@@ -29,6 +29,13 @@ class UserRole(enum.IntFlag):
 
 
 # --------------------------------------------------------------------------------
+# JobQueue naming
+class JobName(enum.StrEnum):
+    ACTUALIZER = enum.auto()
+    LISTENER = enum.auto()
+
+
+# --------------------------------------------------------------------------------
 # bot context typing
 BT = ExtBot[None]
 UD = typing.TypedDict('UD', {})
@@ -104,7 +111,7 @@ class ListenerTableRow(RowLike, typing.Protocol):
     """ Listener table row protocol """
     listener_id: int
     title: str
-    classname: typing.Literal['FILES', 'FOLDERS', 'SQL']
+    classname: typing.Literal['FilesListener', 'FoldersListener', 'SQLListener']
     parameters: str
     cronstring: str
     active: bool

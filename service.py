@@ -1,16 +1,26 @@
 from __future__ import annotations
 import asyncio
 import datetime as dt
+import json
 import logging
 import os
 import random
 import signal
+import traceback
 from contextlib import contextmanager
 from telegram import Update
-from telegram.ext import Job
+from telegram.ext import Job, JobQueue
 from telegram.constants import ChatType
 from telegram.error import BadRequest
-from typing import Any, Callable, Concatenate, Coroutine, Sequence, Unpack
+from typing import (
+    Any,
+    Callable,
+    Concatenate,
+    Coroutine,
+    MutableMapping,
+    Sequence,
+    Unpack
+)
 
 from database import Database
 from defaults import (
@@ -28,8 +38,10 @@ from menupage import (
     MenuError,
     MenuPattern,
 )
+from listener import Listener, ListenerFactory, FilesListener
 from model import (
     UserRole,
+    JobName,
     CustomTableRow,
     # UD, CD, BD, BT, CCT, CT,
     CCT,
@@ -131,7 +143,7 @@ class BugSignalService:
         os.environ.get('BUGSIGNAL_TOKEN')
         self.logger = logger
         self.db = Database(os.environ[Environ.SQL_CONNECTION_STRING],
-                           schema=config['sqlschema'],
+                           schema=config['sqlSchema'],
                            logger=logger)
         self.config = config
 
@@ -169,11 +181,10 @@ class BugSignalService:
     @allowed_for(UserRole.ACTIVE, admin=False)
     async def check(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Force check all listeners for updates """
-        # TODO сделать параметризацию?
         message = await kwargs['message'].reply_text(Notification.MESSAGE_CHECK_LISTENERS)
         tasks = []
         for job in kwargs['job_queue'].jobs():
-            if (job.name or '').startswith('listener'):
+            if (job.name or '').startswith(JobName.LISTENER):
                 tasks.append(asyncio.create_task(job.run(context.application)))
                 # await job.run(context.application)
         if tasks:
@@ -187,7 +198,7 @@ class BugSignalService:
         def _jobformat(job: Job[CCT]):
             """ Return formatted job schedule """
             next_t = job.next_t.replace(microsecond=0, tzinfo=None) if job.next_t else None
-            return f'{getattr(job.data, "name", job.name)} {next_t}'
+            return f'{getattr(job.data, "name", job.name)} @ {next_t}'
         TIMESTAMP = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         STATE = f'[{TIMESTAMP}] Self state:\n' + '\n'.join(map(_jobformat, kwargs['job_queue'].jobs()))
         await kwargs['message'].reply_text(STATE)
@@ -196,7 +207,8 @@ class BugSignalService:
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, admin=True)
     async def actualize(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Actualize listener jobs """
-        # TODO
+        await self.__actualize(context)
+        await self.jobstate(update, context)
 
     @checkvars
     @allowed_for(UserRole.MASTER, admin=False)
@@ -479,12 +491,28 @@ class BugSignalService:
                     await update.effective_message.edit_text(str(context.error), reply_markup=None)
                 except Exception as ex:
                     self.logger.error(str(ex))
+            # case httpx.NetworkError():
+            #     self.__logger.error(f'[ERROR] Network error ({context.error})')
+            # case AssertionError():
+            #     if sent := self.__sendall(context, self.__admins, self.cf.MESSAGE_ASSERTION):
+            #         await asyncio.wait(sent)
+            #     self.__logger.error(f'[ERROR] {context.error}: {traceback.format_exc()}')
+            # case sqlex.OperationalError():
+            #     if 'timed out' in str(context.error):
+            #         name = (context.job.data.name
+            #                 if context.job and isinstance(context.job.data, Connector)
+            #                 else 'unknown')
+            #         if sent := self.__sendall(context,
+            #                                   self.__admins,
+            #                                   self.cf.MESSAGE_SQL_CONNECTION_LOST.format(name=name)):
+            #             await asyncio.wait(sent)
+            #     self.__logger.error(f'[ERROR] SQL operational error {context.error}: {traceback.format_exc()}')
         # TODO send error to DEVELOPER
-        self.logger.error(str(context.error))
+        self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(context.error))
 
     async def _onstart(self, context: CCT):
         """ On start event """
-        # TODO
+        await self.__actualize(context)
 
     async def _onclose(self, context: CCT):
         """ On shutdown event """
@@ -494,6 +522,14 @@ class BugSignalService:
 
     # --------------------------------------------------------------------------------
     # private methods
+    def __exception_args(self, ex: Exception | None) -> tuple[str, str, str]:
+        """ Collect exception info for logging """
+        return (
+            'UnknownException' if ex is None else ex.__class__.__name__,
+            str(ex),
+            traceback.format_exc()
+        )
+
     def __get_random_user(self, args: Sequence[str] | None, exclude_user: int) -> int:
         """ Get random private user """
         chats = self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
@@ -509,6 +545,90 @@ class BugSignalService:
             chat_id = random.choice(privates)
         return chat_id
 
+    async def __actualize(self, context: CCT):
+        """ Actualize listeners """
+        assert (job_queue := context.job_queue) is not None
+        # remove all scheduled actualizer jobs
+        for job in job_queue.get_jobs_by_name(JobName.ACTUALIZER):
+            job.schedule_removal()
+        # get running listeners
+        current_listeners: MutableMapping[int, Job] = {}
+        for job in job_queue.get_jobs_by_name(JobName.LISTENER):
+            if isinstance(job.data, Listener) and job.name is not None:
+                listener_id = int(job.name.replace(JobName.LISTENER, ''))
+                current_listeners[listener_id] = job
+            else:
+                self.logger.error(Notification.ERROR_LISTENER_PROTOCOL, job.name, None)
+        # get listeners info from database
+        try:
+            _listeners = self.db.listeners()
+        except Exception as ex:
+            self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
+            job = job_queue.run_once(self.__actualize,
+                                     when=self.config['retryInterval'],
+                                     name=JobName.ACTUALIZER)
+            self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+            return
+        # actualize listeners
+        for row in _listeners:
+            if row.active:
+                # create
+                kwargs = row._asdict()
+                try:
+                    kwargs.update(json.loads(kwargs.pop('parameters')))
+                    listener = ListenerFactory(row.classname)(**kwargs)
+                except Exception as ex:
+                    self.logger.error(Notification.ERROR_LISTENER_PROTOCOL, row.title, row.listener_id)
+                    continue
+                # start
+                if row.listener_id in current_listeners:
+                    # inherit state and replace existing
+                    job = current_listeners[row.listener_id]
+                    if isinstance(job.data, type(listener)):
+                        listener.inherit(job.data)  # type: ignore
+                    job.data = listener
+                    self.logger.info(Notification.LOG_JOB_UPDATED, job.name, job.next_t)
+                else:
+                    # schedule new job
+                    job = job_queue.run_once(self.__check_listener,
+                                            when=listener.next_t,
+                                            name=f'{JobName.LISTENER}{row.listener_id}',
+                                            data=listener)
+                    self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+            # stop running listener
+            elif row.listener_id in current_listeners:
+                current_listeners[row.listener_id].schedule_removal()
+        # schedule next actualize job
+        job = job_queue.run_once(self.__actualize,
+                                 when=self.config['actualizeInterval'],
+                                 name=JobName.ACTUALIZER)
+        self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+
+    async def __check_listener(self, context: CCT):
+        """ Check for listener updates and send notifications """
+        assert context.job is not None and isinstance(listener := context.job.data, Listener)
+        assert context.job_queue is not None
+        listener_id = int((context.job.name or '').replace(JobName.LISTENER, ''))
+        scheduled = listener.next_t
+        try:
+            messages = listener.check()
+            subscribers = self.db.subscribers(listener_id)
+        except Exception as ex:
+            self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
+            scheduled = self.config['retryInterval']
+        else:
+            if not messages:
+                self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id)
+                return
+            sent = []
+            for chat_id in subscribers:
+                ...     # TODO
+        finally:
+            job = context.job_queue.run_once(self.__check_listener,
+                                             when=scheduled,
+                                             name=f'{JobName.LISTENER}{listener_id}',
+                                             data=listener)
+            self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
 
     # async def message(self, update: Update, context: CallbackContext):
     #     logging.debug('start command received')
