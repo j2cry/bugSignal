@@ -96,6 +96,7 @@ class _ListenerTable(typing.Protocol):
     title: sa.Column[str]
     classname: sa.Column[str]
     parameters: sa.Column[str]
+    cronstring: sa.Column[str]
     active: sa.Column[bool]
     created: sa.Column[dt.datetime]
     updated: sa.Column[dt.datetime]
@@ -103,8 +104,9 @@ class ListenerTableRow(RowLike, typing.Protocol):
     """ Listener table row protocol """
     listener_id: int
     title: str
-    classname: str
+    classname: typing.Literal['FILES', 'FOLDERS', 'SQL']
     parameters: str
+    cronstring: str
     active: bool
     created: dt.datetime
     updated: dt.datetime
@@ -172,7 +174,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 title = sa.Column(mssql.VARCHAR(500), nullable=False)
                 classname = sa.Column(mssql.VARCHAR(50), nullable=False)
                 parameters = sa.Column(mssql.VARCHAR, nullable=False, server_default=sa.literal(r'{}'))
-                # polling = sa.Column(mssql., nullable=False)     # TODO
+                cronstring = sa.Column(mssql.VARCHAR(1000), nullable=False)
                 active = sa.Column(mssql.BIT, server_default=sa.literal(True))
                 created = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
@@ -204,7 +206,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 title = sa.Column(psql.VARCHAR(500), nullable=False)
                 classname = sa.Column(psql.VARCHAR(50), nullable=False)
                 parameters = sa.Column(psql.VARCHAR, nullable=False, server_default=sa.literal(r'{}'))
-                # polling = sa.Column(psql., nullable=False)  # TODO
+                cronstring = sa.Column(psql.VARCHAR(1000), nullable=False)
                 active = sa.Column(psql.BOOLEAN, server_default=sa.literal(True))
                 created = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())

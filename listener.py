@@ -1,21 +1,96 @@
+from __future__ import annotations
 import datetime as dt
-import enum
 import pathlib
 import sqlalchemy as sa
-import typing as t
+import typing
 
 
+# ============================ Factory definition ==============================
+# @typing.runtime_checkable
+# class Listener[**P](typing.Protocol):
+#     updated: dt.datetime
+#     def check(self) -> tuple[str, ...]: ...
+#     def close(self) -> None: ...
+#     def __init__(self, *args: P.args, **kwargs: P.kwargs): ...
 
-@t.final
-class FilesListener:
+class CronMixin(typing.Protocol):
+    _cronstring: str
+    @property
+    def next_t(self) -> dt.datetime: ...
+
+
+@typing.runtime_checkable
+class Listener(CronMixin, typing.Protocol):
+    updated: dt.datetime
+    def check(self) -> tuple[str, ...]: ...
+    def close(self) -> None: ...
+
+
+class ListenerFactory:
+    """ Listener factory """
+    @typing.overload
+    def __new__(cls, ltype: typing.Literal['FILES']) -> type[FilesListener]: ...
+    @typing.overload
+    def __new__(cls, ltype: typing.Literal['FOLDERS']) -> type[FoldersListener]: ...
+    @typing.overload
+    def __new__(cls, ltype: typing.Literal['SQL']) -> type[SQLListener]: ...
+    @typing.overload
+    def __new__[L: Listener, **P](cls, ltype: typing.Callable[P, L]) -> typing.Callable[P, L]: ...
+    def __new__[L: Listener, **P](cls, ltype: typing.Literal['FILES', 'FOLDERS', 'SQL'] | typing.Callable[P, L]) -> ...:
+        match ltype:
+            case 'FILES':
+                return FilesListener
+            case 'FOLDERS':
+                return FoldersListener
+            case 'SQL':
+                return SQLListener
+            case _:
+                return ltype
+
+
+# @typing.overload
+# def factory(ltype: typing.Literal['FILES']) -> type[FilesListener]: ...
+# @typing.overload
+# def factory(ltype: typing.Literal['FOLDERS']) -> type[FoldersListener]: ...
+# @typing.overload
+# def factory(ltype: typing.Literal['SQL']) -> type[SQLListener]: ...
+# @typing.overload
+# def factory[L: Listener, **P](ltype: typing.Callable[P, L]) -> typing.Callable[P, L]: ...
+# def factory[L: Listener, **P](ltype: typing.Literal['FILES', 'FOLDERS', 'SQL'] | typing.Callable[P, L]) -> ...:
+#     match ltype:
+#         case 'FILES':
+#             return FilesListener
+#         case 'FOLDERS':
+#             return FoldersListener
+#         case 'SQL':
+#             return SQLListener
+#         case _:
+#             return ltype
+
+
+# ============================ Listeners definition ============================
+class CronSchedule:
+    _cronstring: str
+
+    @property
+    def next_t(self) -> dt.datetime:
+        """ Get the next scheduled datetime """
+        raise NotImplementedError()
+
+
+@typing.final
+class FilesListener(CronSchedule):
     """ Listen for files update """
     def __init__(self,
-                 updated: dt.datetime,
-                 filepaths: t.Sequence[str],
+                 cronstring: str,
+                 filepaths: typing.Sequence[str],
+                 updated: dt.datetime | None = None,
                  single_message: bool = False,
+                 **kwargs: typing.Any
                  ):
-        self.updated = updated or dt.datetime.now()
+        self._cronstring = cronstring
         self.__filepaths = tuple(pathlib.Path(p) for p in filepaths)
+        self.updated = updated or dt.datetime.now()
         self.__single_message = single_message
 
     def check(self) -> tuple[str, ...]:
@@ -33,28 +108,23 @@ class FilesListener:
     def close(self) -> None:
         return
 
-    # @property
-    # def state(self) -> t.Mapping[str, t.Any]:
-    #     return {
-    #         'updated': self.updated,
-    #         'filepaths': tuple(p.as_posix() for p in self.__filepaths),
-    #         'single_message': self.__single_message,
-    #     }
 
-
-@t.final
-class FoldersListener:
+@typing.final
+class FoldersListener(CronSchedule):
     """ Listen for folders update """
     def __init__(self,
-                 updated: dt.datetime,
-                 folderpaths: t.Sequence[str],
-                 files: t.MutableMapping[str, set[str]] | None = None,
+                 cronstring: str,
+                 folderpaths: typing.Sequence[str],
+                 files: typing.MutableMapping[str, set[str]] | None = None,
+                 updated: dt.datetime | None = None,
                 #  single_message: bool = False,
+                 **kwargs: typing.Any
                  ):
-        self.updated = updated or dt.datetime.now()
+        self._cronstring = cronstring
         self.__folderpaths = tuple(pathlib.Path(p) for p in folderpaths)
         self.__files = files or {p.as_posix(): self.__folder_content(p)
                                  for p in self.__folderpaths}
+        self.updated = updated or dt.datetime.now()
 
     @staticmethod
     def __folder_content(path: pathlib.Path) -> set[str]:
@@ -90,105 +160,31 @@ class FoldersListener:
         return
 
 
-@t.final
-class SQLListener:
+@typing.final
+class SQLListener(CronSchedule):
     """ Listen for SQL destination update.
     Applicable for tables, views, table-valued functions and procedures
     """
     def __init__(self,
-                 updated: dt.datetime,
+                 cronstring: str,
                  connection: str,
                  orderby: str,
                  query: str,
+                 updated: dt.datetime | None = None,
+                 **kwargs: typing.Any
                  ):
-        self.updated = updated or dt.datetime.now()
+        self._cronstring = cronstring
         self.__engine = sa.create_engine(connection)
         self.__orderby = orderby
         self.__query = sa.text(query)
+        self.updated = updated or dt.datetime.now()
 
     def check(self) -> tuple[str, ...]:
         _updated = dt.datetime.now()
         # TODO
-        # NOTE не обновлять self.updated, если данные из SQL не были получены
+        # NOTE don't set self.updated, if SQL query failed
         self.updated = _updated
         return ()
 
     def close(self) -> None:
         self.__engine.dispose()
-
-    # @property
-    # def state(self) -> t.Mapping[str, t.Any]:
-    #     return {}
-
-
-# ============================ Factory definition ==============================
-@t.runtime_checkable
-class Listener[**P](t.Protocol):
-    updated: dt.datetime
-    def check(self) -> tuple[str, ...]: ...
-    def close(self) -> None: ...
-    def __init__(self, *args: P.args, **kwargs: P.kwargs): ...
-    # @property
-    # def state(self) -> t.Mapping[str, t.Any]: ...     # NOTE нужен для пересоздания в actualize
-
-class ListenerFactory:
-    def __new__[L: Listener, **P](cls, ltype: t.Callable[P, L], *args: P.args, **kwargs: P.kwargs) -> L:
-        return ltype(*args, **kwargs)
-
-
-# # usage example
-# class ListenerType(enum.Enum):
-#     FILES = FilesListener
-#     FOLDERS = FoldersListener
-#     SQL = SQLListener
-# s = 'SQL'
-# cf = {
-#     'updated': dt.datetime.now(),
-#     'folderpaths': (),
-# }
-# # ListenerType[s].value типизируется как Union, поэтому идентифицируется ошибка
-# obj = ListenerFactory(ListenerType[s].value, updated=dt.datetime.now(), connection='', orderby='', query='')
-# obj = ListenerFactory(ListenerType[s].value, **cf)
-# # при точном указании ошибок нет
-# obj = ListenerFactory(ListenerType.FILES.value, **cf)
-# obj = ListenerFactory(FoldersListener, folderpaths=(), updated=dt.datetime.now())
-
-
-
-
-
-
-
-# another way
-class FType(enum.IntEnum):
-    FILES = enum.auto()
-    FOLDERS = enum.auto()
-    SQL = enum.auto()
-
-
-@t.overload
-def factory(ltype: t.Literal[FType.FILES], **kwargs: t.Any) -> FilesListener: ...
-@t.overload
-def factory(ltype: t.Literal[FType.FOLDERS], **kwargs: t.Any) -> FoldersListener: ...
-@t.overload
-def factory(ltype: t.Literal[FType.SQL], **kwargs: t.Any) -> SQLListener: ...
-@t.overload
-def factory(ltype: FType, **kwargs: t.Any) -> Listener: ...
-def factory(ltype: FType, **kwargs: t.Any) -> Listener:
-    match ltype:
-        case FType.FILES:
-            return FilesListener(**kwargs)
-        case FType.FOLDERS:
-            return FoldersListener(**kwargs)
-        case FType.SQL:
-            return SQLListener(**kwargs)
-        case _:
-            raise NotImplementedError()
-
-
-# s = 'FILES'
-# cf = {}
-# obj = factory(FType[s], **cf)
-# obj = factory(FType.SQL, **cf)
-
-
