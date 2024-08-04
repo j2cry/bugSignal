@@ -565,7 +565,7 @@ class BugSignalService:
                     except Exception as ex:
                         error = ex
                         self.logger.warning(Notification.ERROR_NOT_SENT_TRACEBACK, *self.__exception_args(ex))
-                        await asyncio.sleep(self.config['retryInterval'])
+                        await asyncio.sleep(self.config['timeout']['retryInterval'])
                 else:
                     self.logger.error(Notification.ERROR_NOT_SENT_TRACEBACK, *self.__exception_args(error))
 
@@ -589,7 +589,7 @@ class BugSignalService:
         except Exception as ex:
             self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
             job = job_queue.run_once(self.__actualize,
-                                     when=self.config['retryInterval'],
+                                     when=self.config['timeout']['retryInterval'],
                                      name=JobName.ACTUALIZER)
             self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
             return
@@ -629,7 +629,7 @@ class BugSignalService:
                 current_listeners[row.listener_id].schedule_removal()
         # schedule next actualize job
         job = job_queue.run_once(self.__actualize,
-                                 when=self.config['actualizeInterval'],
+                                 when=self.config['timeout']['actualizeInterval'],
                                  name=JobName.ACTUALIZER)
         self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
 
@@ -644,7 +644,7 @@ class BugSignalService:
             subscribers = self.db.subscribers(listener_id, active_only=True)
         except Exception as ex:
             self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
-            scheduled = self.config['retryInterval']
+            scheduled = self.config['timeout']['retryInterval']
         else:
             if not messages:
                 self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id)

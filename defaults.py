@@ -37,6 +37,8 @@ class TimeoutConfig(typing.TypedDict):
     common: int | float
     start: int | float
     close: int | float
+    actualizeInterval: int | float
+    retryInterval: int | float
     lifetime: int | float
 
 class Configuration(typing.TypedDict):
@@ -45,8 +47,6 @@ class Configuration(typing.TypedDict):
     timeout: TimeoutConfig
     timezone: str
     sqlSchema: str | None
-    actualizeInterval: int | float
-    retryInterval: int | float
 
 ANY_CONFIG_TYPE: typing.TypeAlias = Configuration | LoggerConfig | TimeoutConfig
 
@@ -62,17 +62,16 @@ DEFAULT = Configuration(
         errors=None,
         level='DEBUG',
     ),
-    # 'timezone': 'Europe/Moscow',
     timezone='UTC',
     timeout=TimeoutConfig(
         common=300,
         start=2.5,
         close=5,
+        actualizeInterval=86400,
+        retryInterval=15,
         lifetime=30,
     ),
     sqlSchema='bugsignal',
-    actualizeInterval=86400,
-    retryInterval=15,
 )
 
 def build_configuration(cf: typing.Mapping[typing.Any, typing.Any]) -> Configuration:
