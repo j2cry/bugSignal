@@ -7,13 +7,6 @@ from croniter import croniter
 
 
 # ============================ Factory definition ==============================
-# @typing.runtime_checkable
-# class Listener[**P](typing.Protocol):
-#     updated: dt.datetime
-#     def check(self) -> tuple[str, ...]: ...
-#     def close(self) -> None: ...
-#     def __init__(self, *args: P.args, **kwargs: P.kwargs): ...
-
 class CronMixin(typing.Protocol):
     _cronstring: str
     _tzinfo: dt.tzinfo
@@ -50,26 +43,6 @@ class ListenerFactory:
                 return SQLListener
             case _:
                 return ltype
-
-
-# @typing.overload
-# def factory(ltype: typing.Literal['FILES']) -> type[FilesListener]: ...
-# @typing.overload
-# def factory(ltype: typing.Literal['FOLDERS']) -> type[FoldersListener]: ...
-# @typing.overload
-# def factory(ltype: typing.Literal['SQL']) -> type[SQLListener]: ...
-# @typing.overload
-# def factory[L: Listener, **P](ltype: typing.Callable[P, L]) -> typing.Callable[P, L]: ...
-# def factory[L: Listener, **P](ltype: typing.Literal['FILES', 'FOLDERS', 'SQL'] | typing.Callable[P, L]) -> ...:
-#     match ltype:
-#         case 'FILES':
-#             return FilesListener
-#         case 'FOLDERS':
-#             return FoldersListener
-#         case 'SQL':
-#             return SQLListener
-#         case _:
-#             return ltype
 
 
 # ============================ Listeners definition ============================

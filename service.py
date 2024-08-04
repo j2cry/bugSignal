@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import signal
+import sqlalchemy.exc as sqlex
 import time
 import traceback
 from contextlib import contextmanager
@@ -82,7 +83,7 @@ def checkvars[S: BugSignalService, T, **KW](
         assert (user_data := context.user_data) is not None, f'[checkvars] user_data is None'
         assert (chat_data := context.chat_data) is not None, f'[checkvars] chat_data is None'
         assert (bot_data := context.bot_data) is not None, f'[checkvars] bot_data is None'
-        assert (job_queue := context.job_queue) is not None, f'[checkvars] JobQueue is None'
+        assert (job_queue := context.job_queue) is not None, f'[checkvars] job_queue is None'
         if (query := update.callback_query) is not None:
             callback_data = query.data or ''
         else:
@@ -147,6 +148,7 @@ class BugSignalService:
                            schema=config['sqlSchema'],
                            logger=logger)
         self.config = config
+        self.__developers: tuple[int, ...] = ()
 
     @contextmanager
     def run(self, *args, **kwargs):
@@ -489,34 +491,44 @@ class BugSignalService:
     # event handlers
     async def _onerror(self, update: object, context: CCT):
         """ Error handler """
+        self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(context.error))
+        notify = False
         match context.error:
+            # drop menu inline
             case MenuError() if isinstance(update, Update) and update.effective_message is not None:
                 try:
                     await update.effective_message.edit_text(str(context.error), reply_markup=None)
                 except Exception as ex:
                     self.logger.error(str(ex))
+            # # http error
             # case httpx.NetworkError():
-            #     self.__logger.error(f'[ERROR] Network error ({context.error})')
-            # case AssertionError():
-            #     if sent := self.__sendall(context, self.__admins, self.cf.MESSAGE_ASSERTION):
-            #         await asyncio.wait(sent)
-            #     self.__logger.error(f'[ERROR] {context.error}: {traceback.format_exc()}')
-            # case sqlex.OperationalError():
-            #     if 'timed out' in str(context.error):
-            #         name = (context.job.data.name
-            #                 if context.job and isinstance(context.job.data, Connector)
-            #                 else 'unknown')
-            #         if sent := self.__sendall(context,
-            #                                   self.__admins,
-            #                                   self.cf.MESSAGE_SQL_CONNECTION_LOST.format(name=name)):
-            #             await asyncio.wait(sent)
-            #     self.__logger.error(f'[ERROR] SQL operational error {context.error}: {traceback.format_exc()}')
-        # TODO send error to DEVELOPER
-        self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(context.error))
+            #     ...
+            # SQL error
+            case sqlex.DBAPIError():
+                notify = True
+            # unhandled error
+            case _:
+                ...
+        # if notify and self.config['owlmode']:
+        if notify:
+            tasks = tuple(
+                asyncio.create_task(self.__send_messages(context.bot, chat_id, (Notification.MESSAGE_SOMETHING_WRONG,)))
+                for chat_id in self.__developers
+            )
+            if tasks:
+                try:
+                    await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
+                except Exception as ex:
+                    self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
 
     async def _onstart(self, context: CCT):
         """ On start event """
         await self.__actualize(context)
+        # collect developers
+        self.__developers = tuple(
+            chat.chat_id for chat in self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
+            if UserRole.DEVELOPER in UserRole(chat.role)
+        )
 
     async def _onclose(self, context: CCT):
         """ On shutdown event """
@@ -571,28 +583,29 @@ class BugSignalService:
 
     async def __actualize(self, context: CCT):
         """ Actualize listeners """
-        assert (job_queue := context.job_queue) is not None
+        assert (job_queue := context.job_queue) is not None, '[__actualize] job_queue is None'
         # remove all scheduled actualizer jobs
         for job in job_queue.get_jobs_by_name(JobName.ACTUALIZER):
             job.schedule_removal()
         # get running listeners
         current_listeners: MutableMapping[int, Job] = {}
         for job in job_queue.jobs():
-            if isinstance(job.data, Listener) and job.name is not None:
-                listener_id = int(job.name.replace(JobName.LISTENER, ''))
-                current_listeners[listener_id] = job
-            else:
-                self.logger.error(Notification.ERROR_LISTENER_PROTOCOL, job.name, None)
+            try:
+                if isinstance(job.data, Listener) and job.name is not None:
+                    listener_id = int(job.name.replace(JobName.LISTENER, ''))
+                    current_listeners[listener_id] = job
+            except Exception as ex:
+                _args = (job.name, None, *self.__exception_args(ex))
+                self.logger.error(Notification.ERROR_LISTENER, *_args)
         # get listeners info from database
         try:
             _listeners = self.db.listeners()
-        except Exception as ex:
-            self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
+        except:
             job = job_queue.run_once(self.__actualize,
                                      when=self.config['timeout']['retryInterval'],
                                      name=JobName.ACTUALIZER)
             self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
-            return
+            raise
         # actualize listeners
         if context.bot.defaults is not None:
             server_timezone = context.bot.defaults.tzinfo
@@ -607,7 +620,8 @@ class BugSignalService:
                                   tzinfo=server_timezone)
                     listener = ListenerFactory(row.classname)(**kwargs)
                 except Exception as ex:
-                    self.logger.error(Notification.ERROR_LISTENER_PROTOCOL, row.title, row.listener_id)
+                    _args = (row.title, row.listener_id, *self.__exception_args(ex))
+                    self.logger.error(Notification.ERROR_LISTENER, *_args)
                     continue
                 # start
                 if row.listener_id in current_listeners:
@@ -635,16 +649,17 @@ class BugSignalService:
 
     async def __check_listener(self, context: CCT):
         """ Check for listener updates and send notifications """
-        assert context.job is not None and isinstance(listener := context.job.data, Listener)
-        assert context.job_queue is not None
+        assert context.job is not None and isinstance(listener := context.job.data, Listener), \
+            '[__check_listener] job is broken or is not a listener job'
+        assert context.job_queue is not None, '[__check_listener] job_queue is None'
         listener_id = int((context.job.name or '').replace(JobName.LISTENER, ''))
         scheduled = listener.next_t
         try:
             messages = listener.check()
             subscribers = self.db.subscribers(listener_id, active_only=True)
         except Exception as ex:
-            self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
             scheduled = self.config['timeout']['retryInterval']
+            raise
         else:
             if not messages:
                 self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id)
