@@ -54,11 +54,11 @@ if __name__ == '__main__':
                    .context_types(CT)
                    .job_queue(job_queue)
                    .token(os.environ[Environ.TELEGRAM_TOKEN])
-                # .read_timeout(bot.cf.READ_TIMEOUT)
-                # .write_timeout(bot.cf.WRITE_TIMEOUT)
-                # .connect_timeout(bot.cf.CONNECT_TIMEOUT)
-                # .pool_timeout(bot.cf.POOL_TIMEOUT)
-                   .defaults(Defaults(tzinfo=pytz.UTC))     # TODO set timezone
+                   # .read_timeout(bot.cf.READ_TIMEOUT)
+                   # .write_timeout(bot.cf.WRITE_TIMEOUT)
+                   # .connect_timeout(bot.cf.CONNECT_TIMEOUT)
+                   # .pool_timeout(bot.cf.POOL_TIMEOUT)
+                   .defaults(Defaults(tzinfo=pytz.timezone(config['timezone'])))
                    .build())
     assert application.job_queue is not None, f"Cannot initialize job queue"
     # add handlers

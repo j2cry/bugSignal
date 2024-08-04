@@ -3,6 +3,7 @@ import datetime as dt
 import pathlib
 import sqlalchemy as sa
 import typing
+from croniter import croniter
 
 
 # ============================ Factory definition ==============================
@@ -15,6 +16,7 @@ import typing
 
 class CronMixin(typing.Protocol):
     _cronstring: str
+    _tzinfo: dt.tzinfo
     @property
     def next_t(self) -> dt.datetime: ...
 
@@ -73,11 +75,12 @@ class ListenerFactory:
 # ============================ Listeners definition ============================
 class CronSchedule:
     _cronstring: str
+    _tzinfo: dt.tzinfo
 
     @property
     def next_t(self) -> dt.datetime:
         """ Get the next scheduled datetime """
-        raise NotImplementedError()
+        return croniter(self._cronstring, dt.datetime.now(dt.UTC)).get_next(dt.datetime).astimezone(self._tzinfo)
 
 
 @typing.final
@@ -85,12 +88,14 @@ class FilesListener(CronSchedule):
     """ Listen for files update """
     def __init__(self,
                  cronstring: str,
+                 tzinfo: dt.tzinfo,
                  filepaths: typing.Sequence[str],
                  single_message: bool = False,
                  **kwargs: typing.Any
                  ):
         self.name = kwargs.get('title', 'unnamed')
         self._cronstring = cronstring
+        self._tzinfo = tzinfo
         self._filepaths = tuple(pathlib.Path(p) for p in filepaths)
         self._single_message = single_message
         self.updated = dt.datetime.now()
@@ -120,12 +125,14 @@ class FoldersListener(CronSchedule):
     """ Listen for folders update """
     def __init__(self,
                  cronstring: str,
+                 tzinfo: dt.tzinfo,
                  folderpaths: typing.Sequence[str],
                 #  single_message: bool = False,
                  **kwargs: typing.Any
                  ):
         self.name = kwargs.get('title', 'unnamed')
         self._cronstring = cronstring
+        self._tzinfo = tzinfo
         self._folderpaths = tuple(pathlib.Path(p) for p in folderpaths)
         self._files = {p.as_posix(): self.__folder_content(p) for p in self._folderpaths}
         self.updated = dt.datetime.now()
@@ -172,20 +179,24 @@ class FoldersListener(CronSchedule):
 
 @typing.final
 class SQLListener(CronSchedule):
-    """ Listen for SQL destination update.
-    Applicable for tables, views, table-valued functions and procedures
+    """ Listen for SQL destination update
+
+    The specified query parameter may contain :timestamp variable for accessing last update datetime
+    The result of specified query must match the following table model:
+        - column 1 is a message datetime
+        - column 2 is a message text
     """
     def __init__(self,
                  cronstring: str,
+                 tzinfo: dt.tzinfo,
                  connection: str,
-                 orderby: str,
                  query: str,
                  **kwargs: typing.Any
                  ):
         self.name = kwargs.get('title', 'unnamed')
         self._cronstring = cronstring
-        self.__engine = sa.create_engine(connection)
-        self.__orderby = orderby
+        self._tzinfo = tzinfo
+        self.__engine = sa.create_engine(connection, poolclass=sa.NullPool)
         self.__query = sa.text(query)
         self.updated = dt.datetime.now()
 
@@ -194,11 +205,13 @@ class SQLListener(CronSchedule):
         self.updated = other.updated
 
     def check(self) -> tuple[str, ...]:
+        # don't set self.updated, if SQL query failed
         _updated = dt.datetime.now()
-        # TODO
-        # NOTE don't set self.updated, if SQL query failed
+        with self.__engine.connect() as conn:
+            rows = conn.execute(self.__query, dict(timestamp=self.updated)).all()
+        content = tuple(f'[{row[0].strftime("%d.%m.%Y %H:%M:%S")}]\n{row[1]}' for row in rows)
         self.updated = _updated
-        return ()
+        return content
 
     def close(self) -> None:
         self.__engine.dispose()

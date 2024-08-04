@@ -197,7 +197,8 @@ class BugSignalService:
         """ Get current bugSignal state """
         def _jobformat(job: Job[CCT]):
             """ Return formatted job schedule """
-            next_t = job.next_t.replace(microsecond=0, tzinfo=None) if job.next_t else None
+            # next_t = job.next_t.replace(microsecond=0, tzinfo=None) if job.next_t else None
+            next_t = job.next_t.replace(microsecond=0) if job.next_t else None
             return f'{getattr(job.data, "name", job.name)} @ {next_t}'
         TIMESTAMP = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         STATE = f'[{TIMESTAMP}] Self state:\n' + '\n'.join(map(_jobformat, kwargs['job_queue'].jobs()))
@@ -570,12 +571,17 @@ class BugSignalService:
             self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
             return
         # actualize listeners
+        if context.bot.defaults is not None:
+            server_timezone = context.bot.defaults.tzinfo
+        else:
+            server_timezone = dt.UTC
         for row in _listeners:
             if row.active:
                 # create
                 kwargs = row._asdict()
                 try:
-                    kwargs.update(json.loads(kwargs.pop('parameters')))
+                    kwargs.update(json.loads(kwargs.pop('parameters')),
+                                  tzinfo=server_timezone)
                     listener = ListenerFactory(row.classname)(**kwargs)
                 except Exception as ex:
                     self.logger.error(Notification.ERROR_LISTENER_PROTOCOL, row.title, row.listener_id)
@@ -612,7 +618,8 @@ class BugSignalService:
         scheduled = listener.next_t
         try:
             messages = listener.check()
-            subscribers = self.db.subscribers(listener_id)
+            subscribers = self.db.subscribers(listener_id, active_only=True)
+            print(subscribers)
         except Exception as ex:
             self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
             scheduled = self.config['retryInterval']
@@ -622,7 +629,7 @@ class BugSignalService:
                 return
             sent = []
             for chat_id in subscribers:
-                ...     # TODO
+                ...     # TODO send messages
         finally:
             job = context.job_queue.run_once(self.__check_listener,
                                              when=scheduled,
