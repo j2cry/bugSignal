@@ -78,11 +78,14 @@ class Database:
     def chats(self,
               active_only: bool = False,
               of_types: str | typing.Sequence[str] | None = None,
+              exclude: int | typing.Sequence[int] | None = None,
               ) -> typing.Sequence[ChatTableRow]:
         """ Request for chats """
         clauses = [CHAT.active.in_((True, active_only))]
         if of_types is not None:
             clauses.append(CHAT.type.in_((of_types,) if isinstance(of_types, str) else of_types))
+        if exclude is not None:
+            clauses.append(CHAT.chat_id.not_in((exclude,) if isinstance(exclude, int) else exclude))
         query = sa.select(CHAT).where(*clauses).order_by(CHAT.chat_id)
         self.__logger.debug(str(query))
         with self.__engine.connect() as conn:
@@ -119,10 +122,12 @@ class Database:
                         ).label('chat_id'),
                 LISTENER.listener_id,
                 SUBSCRIPTION.active
-            ).join(SUBSCRIPTION, isouter=True).where(
-                LISTENER.active == True,
-                sa.or_(SUBSCRIPTION.chat_id == chat_id,
-                       SUBSCRIPTION.chat_id == None)
+            ).join(SUBSCRIPTION,
+                   onclause=sa.and_(SUBSCRIPTION.listener_id == LISTENER.listener_id,
+                                    SUBSCRIPTION.chat_id == chat_id),
+                   isouter=True,
+            ).where(
+                LISTENER.active == True
             ).order_by(LISTENER.title)
 
             self.__logger.debug(str(query))

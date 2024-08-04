@@ -291,7 +291,7 @@ class BugSignalService:
                        CustomTableRow(title='Subscriptions',
                                       action=Action.SUBSCRIPTIONS,
                                       pattern=MenuPattern.SUBSCRIPTIONS),
-                       CustomTableRow(title='Roles',
+                       CustomTableRow(title='Private roles',
                                       action=Action.ROLES,
                                       pattern=MenuPattern.ROLES),
                        )
@@ -363,7 +363,7 @@ class BugSignalService:
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.CHATS,
                     title='Available chats',
-                    items=self.db.chats(),      # TODO exclude self
+                    items=self.db.chats(exclude=kwargs['chat'].id),
                     items_action=Action.SWITCH,
                     checkmark=True,
                     additional_buttons=Button.NAVIGATION | Button.BACK,
@@ -448,7 +448,9 @@ class BugSignalService:
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.ROLES,
                     title='Available private chats',
-                    items=self.db.chats(active_only=True, of_types=ChatType.PRIVATE),   # TODO exclude self
+                    items=self.db.chats(active_only=True,
+                                        of_types=ChatType.PRIVATE,
+                                        exclude=kwargs['chat'].id),
                     items_action=Action.CHATS,
                     additional_buttons=Button.NAVIGATION | Button.BACK,
                     previous=menupage
@@ -619,7 +621,6 @@ class BugSignalService:
         try:
             messages = listener.check()
             subscribers = self.db.subscribers(listener_id, active_only=True)
-            print(subscribers)
         except Exception as ex:
             self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
             scheduled = self.config['retryInterval']

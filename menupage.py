@@ -143,7 +143,7 @@ class InlineMenuPage:
                 mark = f'{(Emoji.ENABLED if _content.get(CallbackKey.ACTIVE) else Emoji.DISABLED)} '
             else:
                 mark = ''
-            title = mark + getattr(item, 'title', f'Button {n}')
+            title = mark + (getattr(item, 'title', None) or f'Unknown {n}')
             _pattern = _item_dict.get('pattern', meta.pattern)
             buttons.append((self.__set_button_content(title, _content, _pattern),))
 
