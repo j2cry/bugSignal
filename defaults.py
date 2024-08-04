@@ -37,6 +37,7 @@ class TimeoutConfig(typing.TypedDict):
     common: int | float
     start: int | float
     close: int | float
+    lifetime: int | float
 
 class Configuration(typing.TypedDict):
     """ Service configuration """
@@ -67,6 +68,7 @@ DEFAULT = Configuration(
         common=300,
         start=2.5,
         close=5,
+        lifetime=30,
     ),
     sqlSchema='bugsignal',
     actualizeInterval=86400,
@@ -107,8 +109,10 @@ class Notification:
     LOG_COMMAND_REJECTED = 'User %s [%s] is trying to perform an unsafe operation'
     LOG_SENT_FROM_TO = '%s sent a fox to %s'
     LOG_SHUTDOWN = 'The user %s [%s] initiated the shutdown of the service'
+    LOG_MESSAGE_SENT = 'Message sent to %s successfully'
 
     ERROR_MENU_PAGE = 'Menu page context is broken'
     ERROR_MENU_CALLBACK = 'Menu callback content error'
     ERROR_LISTENER_PROTOCOL = 'Listener %s [%s] has incompatible protocol'
     ERROR_TRACEBACK = '[%s]: %s\n%s'
+    ERROR_NOT_SENT_TRACEBACK = 'Message not sent [%s]: %s\n%s'

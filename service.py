@@ -6,10 +6,11 @@ import logging
 import os
 import random
 import signal
+import time
 import traceback
 from contextlib import contextmanager
 from telegram import Update
-from telegram.ext import Job, JobQueue
+from telegram.ext import Job
 from telegram.constants import ChatType
 from telegram.error import BadRequest
 from typing import (
@@ -44,7 +45,7 @@ from model import (
     JobName,
     CustomTableRow,
     # UD, CD, BD, BT, CCT, CT,
-    CCT,
+    BT, CCT,
     ValidatedContext
 )
 
@@ -548,6 +549,26 @@ class BugSignalService:
             chat_id = random.choice(privates)
         return chat_id
 
+    async def __send_messages(self, bot: BT, chat_id: int, messages: tuple[str, ...]):
+        """ Send messages to chat by parts """
+        LENGTH = 4096   # max telegram message length
+        for message in messages:
+            for bound in range(0, len(message), LENGTH):
+                part = message[bound:bound + LENGTH]
+                started = time.monotonic()
+                error = None
+                while time.monotonic() - started <= self.config['timeout']['lifetime']:
+                    try:
+                        await bot.send_message(chat_id, part)
+                        self.logger.info(Notification.LOG_MESSAGE_SENT, chat_id)
+                        break
+                    except Exception as ex:
+                        error = ex
+                        self.logger.warning(Notification.ERROR_NOT_SENT_TRACEBACK, *self.__exception_args(ex))
+                        await asyncio.sleep(self.config['retryInterval'])
+                else:
+                    self.logger.error(Notification.ERROR_NOT_SENT_TRACEBACK, *self.__exception_args(error))
+
     async def __actualize(self, context: CCT):
         """ Actualize listeners """
         assert (job_queue := context.job_queue) is not None
@@ -556,7 +577,7 @@ class BugSignalService:
             job.schedule_removal()
         # get running listeners
         current_listeners: MutableMapping[int, Job] = {}
-        for job in job_queue.get_jobs_by_name(JobName.LISTENER):
+        for job in job_queue.jobs():
             if isinstance(job.data, Listener) and job.name is not None:
                 listener_id = int(job.name.replace(JobName.LISTENER, ''))
                 current_listeners[listener_id] = job
@@ -628,9 +649,10 @@ class BugSignalService:
             if not messages:
                 self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id)
                 return
-            sent = []
-            for chat_id in subscribers:
-                ...     # TODO send messages
+            tasks = tuple(asyncio.create_task(self.__send_messages(context.bot, chat.chat_id, messages))
+                          for chat in subscribers)
+            if tasks:
+                await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
         finally:
             job = context.job_queue.run_once(self.__check_listener,
                                              when=scheduled,
