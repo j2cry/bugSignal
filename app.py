@@ -48,7 +48,7 @@ if __name__ == '__main__':
     if DEFAULTS_LOADED:
         logger.warning('Unable to read configuration file. Default configuration applied.')
     # create application
-    bot = BugSignalService(logger)
+    bot = BugSignalService(logger, config)
     job_queue = JobQueue[CCT]()
     application = (Application.builder()
                    .context_types(CT)

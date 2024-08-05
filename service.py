@@ -40,7 +40,7 @@ from menupage import (
     MenuError,
     MenuPattern,
 )
-from listener import Listener, ListenerFactory, FilesListener
+from listener import Listener, ListenerFactory
 from model import (
     UserRole,
     JobName,
@@ -142,7 +142,6 @@ def allowed_for(roles: UserRole, admin: bool):
 class BugSignalService:
     def __init__(self, logger: logging.Logger, config: Configuration = DEFAULT):
         # load credentials
-        os.environ.get('BUGSIGNAL_TOKEN')
         self.logger = logger
         self.db = Database(os.environ[Environ.SQL_CONNECTION_STRING],
                            schema=config['sqlSchema'],

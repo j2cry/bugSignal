@@ -18,7 +18,6 @@ class Environ(enum.StrEnum):
     """ Environment variables' names """
     TELEGRAM_TOKEN = 'BUGSIGNAL_TELEGRAM_TOKEN'
     SQL_CONNECTION_STRING = 'BUGSIGNAL_SQL_CONNECTION_STRING'
-    SQL_CONNECTION_SCHEMA = 'BUGSIGNAL_SQL_CONNECTION_SCHEMA'
 
 # --------------------------------------------------------------------------------
 class LoggerConfig(typing.TypedDict):
