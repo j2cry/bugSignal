@@ -8,10 +8,10 @@ from croniter import croniter
 
 # ============================ Factory definition ==============================
 class CronMixin(typing.Protocol):
-    _cronstring: str
-    _tzinfo: dt.tzinfo
     @property
     def next_t(self) -> dt.datetime: ...
+    @property
+    def expired(self) -> bool: ...
 
 
 @typing.runtime_checkable
@@ -47,13 +47,23 @@ class ListenerFactory:
 
 # ============================ Listeners definition ============================
 class CronSchedule:
-    _cronstring: str
-    _tzinfo: dt.tzinfo
+    def __init__(self, cronsting: str, tzinfo: dt.tzinfo):
+        """ Init croniter """
+        self.__cron = croniter(cronsting, dt.datetime.now(tzinfo))
+        self.__tzinfo = tzinfo
 
     @property
     def next_t(self) -> dt.datetime:
         """ Get the next scheduled datetime """
-        return croniter(self._cronstring, dt.datetime.now(dt.UTC)).get_next(dt.datetime).astimezone(self._tzinfo)
+        if (_t := self.__cron.get_current(dt.datetime)) <= dt.datetime.now(self.__tzinfo):
+            return self.__cron.get_next(dt.datetime)
+        else:
+            return _t
+
+    @property
+    def expired(self) -> bool:
+        """ Check if current schedule has been expired """
+        return self.__cron.get_current(dt.datetime) <= dt.datetime.now(self.__tzinfo)
 
 
 @typing.final
@@ -66,9 +76,8 @@ class FilesListener(CronSchedule):
                  single_message: bool = False,
                  **kwargs: typing.Any
                  ):
+        CronSchedule.__init__(self, cronstring, tzinfo)
         self.name = kwargs.get('title', 'unnamed')
-        self._cronstring = cronstring
-        self._tzinfo = tzinfo
         self._filepaths = tuple(pathlib.Path(p) for p in filepaths)
         self._single_message = single_message
         self.updated = dt.datetime.now()
@@ -103,9 +112,8 @@ class FoldersListener(CronSchedule):
                 #  single_message: bool = False,
                  **kwargs: typing.Any
                  ):
+        CronSchedule.__init__(self, cronstring, tzinfo)
         self.name = kwargs.get('title', 'unnamed')
-        self._cronstring = cronstring
-        self._tzinfo = tzinfo
         self._folderpaths = tuple(pathlib.Path(p) for p in folderpaths)
         self._files = {p.as_posix(): self.__folder_content(p) for p in self._folderpaths}
         self.updated = dt.datetime.now()
@@ -166,9 +174,8 @@ class SQLListener(CronSchedule):
                  query: str,
                  **kwargs: typing.Any
                  ):
+        CronSchedule.__init__(self, cronstring, tzinfo)
         self.name = kwargs.get('title', 'unnamed')
-        self._cronstring = cronstring
-        self._tzinfo = tzinfo
         self.__engine = sa.create_engine(connection, poolclass=sa.NullPool)
         self.__query = sa.text(query)
         self.updated = dt.datetime.now()

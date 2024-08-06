@@ -188,7 +188,6 @@ class BugSignalService:
         for job in kwargs['job_queue'].jobs():
             if (job.name or '').startswith(JobName.LISTENER):
                 tasks.append(asyncio.create_task(job.run(context.application)))
-                # await job.run(context.application)
         if tasks:
             await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
         await message.reply_text(Notification.MESSAGE_DONE)
@@ -656,7 +655,7 @@ class BugSignalService:
         try:
             messages = listener.check()
             subscribers = self.db.subscribers(listener_id, active_only=True)
-        except Exception as ex:
+        except:
             scheduled = self.config['timeout']['retryInterval']
             raise
         else:
@@ -668,6 +667,8 @@ class BugSignalService:
             if tasks:
                 await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
         finally:
+            if not listener.expired:
+                return
             job = context.job_queue.run_once(self.__check_listener,
                                              when=scheduled,
                                              name=f'{JobName.LISTENER}{listener_id}',
@@ -677,5 +678,3 @@ class BugSignalService:
     # async def message(self, update: Update, context: CallbackContext):
     #     logging.debug('start command received')
     #     bp = 1
-
-
