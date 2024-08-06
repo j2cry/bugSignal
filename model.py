@@ -189,7 +189,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 __tablename__ = 'chat'
                 chat_id = sa.Column(mssql.BIGINT, primary_key=True)
                 title = sa.Column(mssql.VARCHAR(500), nullable=False)
-                role = sa.Column(mssql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.USER.value))
+                role = sa.Column(mssql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.BLOCKED.value))
                 type = sa.Column(mssql.VARCHAR(10), nullable=False)
                 active = sa.Column(mssql.BIT, server_default=sa.literal(True))
                 created = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
@@ -221,7 +221,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 __tablename__ = 'chat'
                 chat_id = sa.Column(psql.BIGINT, primary_key=True)
                 title = sa.Column(psql.VARCHAR(500), nullable=False)
-                role = sa.Column(psql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.USER.value))
+                role = sa.Column(psql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.BLOCKED.value))
                 type = sa.Column(psql.VARCHAR(10), nullable=False)
                 active = sa.Column(psql.BOOLEAN, server_default=sa.literal(True))
                 created = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
