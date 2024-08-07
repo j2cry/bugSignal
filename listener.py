@@ -9,9 +9,7 @@ from croniter import croniter
 # ============================ Factory definition ==============================
 class CronMixin(typing.Protocol):
     @property
-    def next_t(self) -> dt.datetime: ...
-    @property
-    def expired(self) -> bool: ...
+    def next_t(self) -> tuple[bool, dt.datetime]: ...
 
 
 @typing.runtime_checkable
@@ -51,19 +49,17 @@ class CronSchedule:
         """ Init croniter """
         self.__cron = croniter(cronsting, dt.datetime.now(tzinfo))
         self.__tzinfo = tzinfo
+        self.__cron.get_next()  # init next_t
 
     @property
-    def next_t(self) -> dt.datetime:
-        """ Get the next scheduled datetime """
-        if (_t := self.__cron.get_current(dt.datetime)) <= dt.datetime.now(self.__tzinfo):
-            return self.__cron.get_next(dt.datetime)
+    def next_t(self) -> tuple[bool, dt.datetime]:
+        """ Provides the current expiration status and the following schedule entry [always in the future] """
+        _current_t = self.__cron.get_current(dt.datetime)
+        _expired = _current_t <= dt.datetime.now(self.__tzinfo)
+        if _expired:
+            return _expired, self.__cron.get_next(dt.datetime)
         else:
-            return _t
-
-    @property
-    def expired(self) -> bool:
-        """ Check if current schedule has been expired """
-        return self.__cron.get_current(dt.datetime) <= dt.datetime.now(self.__tzinfo)
+            return _expired, _current_t
 
 
 @typing.final

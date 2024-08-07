@@ -632,7 +632,7 @@ class BugSignalService:
                 else:
                     # schedule new job
                     job = job_queue.run_once(self.__check_listener,
-                                            when=listener.next_t,
+                                            when=listener.next_t[1],
                                             name=f'{JobName.LISTENER}{row.listener_id}',
                                             data=listener)
                     self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
@@ -651,7 +651,8 @@ class BugSignalService:
             '[__check_listener] job is broken or is not a listener job'
         assert context.job_queue is not None, '[__check_listener] job_queue is None'
         listener_id = int((context.job.name or '').replace(JobName.LISTENER, ''))
-        scheduled = listener.next_t
+        expired, scheduled = listener.next_t
+        _updates_from = listener.updated
         try:
             messages = listener.check()
             subscribers = self.db.subscribers(listener_id, active_only=True)
@@ -660,14 +661,14 @@ class BugSignalService:
             raise
         else:
             if not messages:
-                self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id)
+                self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id, _updates_from)
                 return
             tasks = tuple(asyncio.create_task(self.__send_messages(context.bot, chat.chat_id, messages))
                           for chat in subscribers)
             if tasks:
                 await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
         finally:
-            if not listener.expired:
+            if not expired:
                 return
             job = context.job_queue.run_once(self.__check_listener,
                                              when=scheduled,
