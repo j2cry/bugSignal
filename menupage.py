@@ -17,6 +17,7 @@ class MenuPattern(enum.StrEnum):
     LISTENERS = enum.auto()
     SUBSCRIPTIONS = enum.auto()
     ROLES = enum.auto()
+    SHUTDOWN = enum.auto()
 
 
 class Action(enum.IntEnum):
@@ -31,6 +32,7 @@ class Action(enum.IntEnum):
     LISTENERS = enum.auto()
     SUBSCRIPTIONS = enum.auto()
     ROLES = enum.auto()
+    CONFIRM = enum.auto()
 
 
 class CallbackKey(enum.StrEnum):
@@ -59,6 +61,7 @@ class Button(enum.IntFlag):
     EMPTY = 0
     NAVIGATION = enum.auto()
     BACK = enum.auto()
+    CLOSE = enum.auto()
 
 
 @typing.final
@@ -155,7 +158,8 @@ class InlineMenuPage:
         if Button.BACK in self.__additional_buttons:
             buttons.append((self.__set_button_content('Back', {'action': Action.BACK}),))
         # add CLOSE button
-        buttons.append((self.__set_button_content('Close', {'action': Action.CLOSE}),))
+        if Button.CLOSE in self.__additional_buttons:
+            buttons.append((self.__set_button_content('Close', {'action': Action.CLOSE}),))
         return InlineKeyboardMarkup(buttons)
 
     def content(self, key: str) -> CallbackContent:
@@ -167,4 +171,3 @@ class InlineMenuPage:
             return CallbackContent(action=None)
 
 class MenuError(Exception): ...
-

@@ -212,14 +212,6 @@ class BugSignalService:
         await self.__actualize(context)
         await self.jobstate(update, context)
 
-    @checkvars
-    @allowed_for(UserRole.MASTER, admin=False)
-    async def shutdown(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
-        """ Get current bugSignal state """
-        self.logger.info(Notification.LOG_SHUTDOWN, kwargs['user'].name, kwargs['user'].id)
-        await kwargs['message'].reply_text(Notification.MESSAGE_SHUTDOWN)
-        kwargs['job_queue'].run_once(self._onclose, when=self.config['timeout']['close'])
-
     # --------------------------------------------------------------------------------
     # Common inline menu
     @checkvars
@@ -295,7 +287,8 @@ class BugSignalService:
                        CustomTableRow(title='Private roles',
                                       action=Action.ROLES,
                                       pattern=MenuPattern.ROLES),
-                       )
+                       ),
+                additional_buttons=Button.CLOSE,
             )
             chat_data['menupage'] = menupage
             markup = menupage.markup
@@ -332,7 +325,7 @@ class BugSignalService:
                     items=self.db.listeners(),
                     items_action=Action.SWITCH,
                     checkmark=True,
-                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
                     previous=menupage,
                 )
                 kwargs['chat_data']['menupage'] = menupage
@@ -367,7 +360,7 @@ class BugSignalService:
                     items=self.db.chats(exclude=kwargs['chat'].id),
                     items_action=Action.SWITCH,
                     checkmark=True,
-                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
                     previous=menupage,
                 )
                 kwargs['chat_data']['menupage'] = menupage
@@ -401,7 +394,7 @@ class BugSignalService:
                     title='Choose a chat to manage subscriptions',
                     items=self.db.chats(active_only=True),
                     items_action=Action.LISTENERS,
-                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
                     previous=menupage,
                 )
                 kwargs['chat_data']['menupage'] = menupage
@@ -415,7 +408,7 @@ class BugSignalService:
                     items=subscriptions,
                     items_action=Action.SWITCH,
                     checkmark=True,
-                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
                     previous=menupage,
                 )
                 kwargs['chat_data']['menupage'] = menupage
@@ -453,7 +446,7 @@ class BugSignalService:
                                         of_types=ChatType.PRIVATE,
                                         exclude=kwargs['chat'].id),
                     items_action=Action.CHATS,
-                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
                     previous=menupage
                 )
                 kwargs['chat_data']['menupage'] = menupage
@@ -467,7 +460,7 @@ class BugSignalService:
                     items=roles,
                     items_action=Action.SWITCH,
                     checkmark=True,
-                    additional_buttons=Button.NAVIGATION | Button.BACK,
+                    additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
                     previous=menupage,
                 )
                 kwargs['chat_data']['menupage'] = menupage
@@ -483,6 +476,56 @@ class BugSignalService:
                 return await self.__menu_commons(update, context)
         # refresh menu
         await self.__menu_refresh(update, context)
+
+    # --------------------------------------------------------------------------------
+    # shutdown approve menu
+    @checkvars
+    @allowed_for(UserRole.MASTER, admin=False)
+    async def shutdown(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Open shutdown confirmation """
+        chat_data = kwargs['chat_data']
+        if (menupage := chat_data.get('menupage')) is None:
+            if kwargs['callback_data']:
+                raise MenuError(Notification.ERROR_MENU_PAGE)
+            # build confirmation menu
+            menupage = InlineMenuPage(
+                pattern=MenuPattern.SHUTDOWN,
+                title='Are you sure you want to shutdown the tracker? <b>It is impossible to turn it back on without access to the server.</b>',
+                items=(CustomTableRow(title=f'{Emoji.ENABLED} Yes',
+                                      action=Action.CONFIRM),
+                       CustomTableRow(title=f'{Emoji.DISABLED} No',
+                                      action=Action.CLOSE),
+                      ),
+            )
+            chat_data['menupage'] = menupage
+            markup = menupage.markup
+            try:
+                await kwargs['message'].edit_text(menupage.title,
+                                                  parse_mode='HTML',
+                                                  reply_markup=markup)
+            except BadRequest:
+                await context.bot.send_message(kwargs['chat'].id, menupage.title,
+                                               parse_mode='HTML',
+                                               reply_markup=markup)
+            return
+        else:
+            content = menupage.content(kwargs['callback_data'])
+            # match inline query callback
+            match content:
+                # schedule shutdown job
+                case {CallbackKey.ACTION: Action.CONFIRM}:
+                    self.logger.info(Notification.LOG_SHUTDOWN, kwargs['user'].name, kwargs['user'].id)
+                    # await kwargs['message'].reply_text(Notification.MESSAGE_SHUTDOWN)
+                    await kwargs['message'].edit_text(Notification.MESSAGE_SHUTDOWN, reply_markup=None)
+                    kwargs['job_queue'].run_once(self._onclose, when=self.config['timeout']['close'])
+                # close menu
+                case _:
+                    return await self.__menu_commons(update, context)
+        # refresh menu
+        # await self.__menu_refresh(update, context)
+
+
+
 
     # --------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------

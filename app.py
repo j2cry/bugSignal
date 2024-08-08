@@ -75,6 +75,7 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(bot.chats_menu, MenuPattern.CHATS))
     application.add_handler(CallbackQueryHandler(bot.subscriptions_menu, MenuPattern.SUBSCRIPTIONS))
     application.add_handler(CallbackQueryHandler(bot.roles_menu, MenuPattern.ROLES))
+    application.add_handler(CallbackQueryHandler(bot.shutdown, MenuPattern.SHUTDOWN))
 
     # add message handlers: Group policy Off required
     # application.add_handler(MessageHandler(None, bot.message))
@@ -87,5 +88,3 @@ if __name__ == '__main__':
     logger.info('Application closed')
     for handler in logger.handlers:
         logger.removeHandler(handler)
-
-
