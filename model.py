@@ -111,7 +111,7 @@ class ListenerTableRow(RowLike, typing.Protocol):
     """ Listener table row protocol """
     listener_id: int
     title: str
-    classname: typing.Literal['FilesListener', 'FoldersListener', 'SQLListener']
+    classname: typing.Literal['FileSystemListener', 'SQLListener']
     parameters: str
     cronstring: str
     active: bool
