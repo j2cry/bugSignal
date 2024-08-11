@@ -4,12 +4,14 @@ import datetime as dt
 import json
 import logging
 import os
+import pytz
 import random
 import signal
 import sqlalchemy.exc as sqlex
 import time
 import traceback
 from contextlib import contextmanager
+from croniter import croniter
 from telegram import Update
 from telegram.ext import Job
 from telegram.constants import ChatType
@@ -135,6 +137,13 @@ class BugSignalService:
                            logger=logger)
         self.config = config
         self.__developers: tuple[int, ...] = ()
+        try:
+            self.timezone = pytz.timezone(self.config['timezone'])
+        except:
+            self.timezone = pytz.UTC
+            self.logger.warning(Notification.LOG_INCORRECT_TIMEZONE, self.config['timezone'])
+        self.__actualizer_cron = croniter(self.config['timeout']['actualizerCron'],
+                                          dt.datetime.now(self.timezone))
 
     @contextmanager
     def run(self, *args, **kwargs):
@@ -631,17 +640,13 @@ class BugSignalService:
             self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
             raise
         # actualize listeners
-        if context.bot.defaults is not None:
-            server_timezone = context.bot.defaults.tzinfo
-        else:
-            server_timezone = dt.UTC
         for row in _listeners:
             if row.active:
                 # create
                 kwargs = row._asdict()
                 try:
                     kwargs.update(json.loads(kwargs.pop('parameters')),
-                                  tzinfo=server_timezone)
+                                  tzinfo=self.timezone)
                     listener = ListenerFactory(row.classname)(**kwargs)
                 except Exception as ex:
                     _args = (row.title, row.listener_id, *self.__exception_args(ex))
@@ -667,7 +672,7 @@ class BugSignalService:
                 current_listeners[row.listener_id].schedule_removal()
         # schedule next actualize job
         job = job_queue.run_once(self.__actualize,
-                                 when=self.config['timeout']['actualizeInterval'],
+                                 when=self.__actualizer_cron.get_next(dt.datetime),
                                  name=JobName.ACTUALIZER)
         self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
 

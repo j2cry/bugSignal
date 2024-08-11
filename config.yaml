@@ -13,7 +13,7 @@ timeout:
   common: 300
   start: 2.5
   close: 5
-  actualizeInterval: 86400
+  actualizerCron: "5 0 * * *"
   retryInterval: 15
   lifetime: 30
 

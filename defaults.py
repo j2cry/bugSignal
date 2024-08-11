@@ -36,7 +36,7 @@ class TimeoutConfig(typing.TypedDict):
     common: int | float
     start: int | float
     close: int | float
-    actualizeInterval: int | float
+    actualizerCron: str
     retryInterval: int | float
     lifetime: int | float
 
@@ -61,15 +61,15 @@ DEFAULT = Configuration(
         errors=None,
         level='DEBUG',
     ),
-    timezone='UTC',
     timeout=TimeoutConfig(
         common=300,
         start=2.5,
         close=5,
-        actualizeInterval=86400,
+        actualizerCron='5 0 * * *',
         retryInterval=15,
         lifetime=30,
     ),
+    timezone='UTC',
     sqlSchema='bugsignal',
 )
 
@@ -109,6 +109,7 @@ class Notification:
     LOG_SENT_FROM_TO = '%s sent a fox to %s'
     LOG_SHUTDOWN = 'The user %s [%s] initiated the shutdown of the service'
     LOG_MESSAGE_SENT = 'Message sent to %s successfully'
+    LOG_INCORRECT_TIMEZONE = 'Incorrect timezone `%s`. Timezone set to UTC'
 
     ERROR_MENU_PAGE = 'Menu page context is broken'
     ERROR_MENU_CALLBACK = 'Menu callback content error'

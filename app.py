@@ -2,7 +2,6 @@ import logging
 import logging.handlers
 import os
 import pathlib
-import pytz
 import yaml
 from telegram.ext import (
     Application,
@@ -58,7 +57,7 @@ if __name__ == '__main__':
                    # .write_timeout(bot.cf.WRITE_TIMEOUT)
                    # .connect_timeout(bot.cf.CONNECT_TIMEOUT)
                    # .pool_timeout(bot.cf.POOL_TIMEOUT)
-                   .defaults(Defaults(tzinfo=pytz.timezone(config['timezone'])))
+                   .defaults(Defaults(tzinfo=bot.timezone))
                    .build())
     assert application.job_queue is not None, f"Cannot initialize job queue"
     # add handlers
