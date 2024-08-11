@@ -101,6 +101,7 @@ class Notification:
     MESSAGE_SOMETHING_WRONG = "I think i'm gonna throw up 🤢. Check my log please."
     MESSAGE_SHUTDOWN = 'Shutdown job was scheduled. See ya! 👋'
 
+    LOG_CHECK_LISTENER = 'Checking for updates listener %s [%s] from timestamp %s'
     LOG_NO_UPDATES = 'Listener %s [%s] has no updates from timestamp %s'
     LOG_JOB_SCHEDULED = 'Job %s scheduled @ %s'
     LOG_JOB_UPDATED = 'Job %s updated. Next run @ %s'

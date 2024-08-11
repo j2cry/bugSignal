@@ -679,9 +679,12 @@ class BugSignalService:
         listener_id = int((context.job.name or '').replace(JobName.LISTENER, ''))
         expired, scheduled = listener.next_t
         _updates_from = listener.updated
+        self.logger.debug(Notification.LOG_CHECK_LISTENER, listener.name, listener_id, listener.updated)
         try:
-            messages = listener.check()
-            subscribers = self.db.subscribers(listener_id, active_only=True)
+            if messages := listener.check():
+                subscribers = self.db.subscribers(listener_id, active_only=True)
+            else:
+                subscribers = ()
         except:
             scheduled = self.config['timeout']['retryInterval']
             raise

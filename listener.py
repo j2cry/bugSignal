@@ -208,7 +208,10 @@ class SQLListener(BaseListener, CronSchedule):
         with self.__engine.connect() as conn:
             rows = conn.execute(self.__query, dict(timestamp=self.updated)).all()
         content = tuple(f'[{row[0].strftime("%d.%m.%Y %H:%M:%S")}]\n{row[1]}' for row in rows)
-        self.updated = max(row[0] for row in rows) if self.__continual and rows else _updated
+        if not self.__continual:
+            self.updated = _updated
+        elif rows:
+            self.updated = max(row[0] for row in rows)
         return content
 
     def close(self) -> None:
