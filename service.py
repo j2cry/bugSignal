@@ -702,7 +702,8 @@ class BugSignalService:
             if tasks:
                 await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
         finally:
-            if not expired:
+            # reschedule if expired or check failed
+            if not expired and isinstance(scheduled, dt.datetime):
                 return
             job = context.job_queue.run_once(self.__check_listener,
                                              when=scheduled,
