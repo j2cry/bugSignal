@@ -186,7 +186,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 updated = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
             class _MSSQL_Chat:
                 __tablename__ = 'chat'
-                chat_id = sa.Column(mssql.BIGINT, primary_key=True)
+                chat_id = sa.Column(mssql.BIGINT, primary_key=True, autoincrement=False)
                 title = sa.Column(mssql.VARCHAR(500), nullable=False)
                 role = sa.Column(mssql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.BLOCKED.value))
                 type = sa.Column(mssql.VARCHAR(10), nullable=False)
@@ -218,7 +218,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 updated = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
             class _PostgreSQL_Chat:
                 __tablename__ = 'chat'
-                chat_id = sa.Column(psql.BIGINT, primary_key=True)
+                chat_id = sa.Column(psql.BIGINT, primary_key=True, autoincrement=False)
                 title = sa.Column(psql.VARCHAR(500), nullable=False)
                 role = sa.Column(psql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.BLOCKED.value))
                 type = sa.Column(psql.VARCHAR(10), nullable=False)
