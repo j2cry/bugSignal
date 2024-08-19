@@ -10,8 +10,8 @@ from croniter import croniter
 # ============================ Exceptions definition ===========================
 class ListenerCheckError(Exception):
     """ Listener check exception """
-    def __init__(self, listener_id: int, title: str) -> None:
-        super().__init__(listener_id, title)
+    def __init__(self, listener_id: int, title: str, chat_id: int | None) -> None:
+        super().__init__(listener_id, title, chat_id)
 
 
 # ============================ Factory definition ==============================

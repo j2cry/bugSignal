@@ -181,12 +181,22 @@ class BugSignalService:
     async def check(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Force check all listeners for updates """
         message = await kwargs['message'].reply_text(Notification.MESSAGE_CHECK_LISTENERS)
-        tasks = []
         for job in kwargs['job_queue'].jobs():
-            if (job.name or '').startswith(JobName.LISTENER):
-                tasks.append(asyncio.create_task(job.run(context.application)))
-        if tasks:
-            await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
+            if isinstance(listener := job.data, Listener) and (job.name or '').startswith(JobName.LISTENER):
+                kwargs['job_queue'].run_once(self.__check_listener,
+                                             when=0,
+                                             data=listener,
+                                             name=f'{JobName.CHECKER}{listener.identifier}',
+                                             chat_id=kwargs['chat'].id,
+                                             job_kwargs={'misfire_grace_time': None})
+        # await for all forced listeners done
+        started = time.monotonic()
+        while time.monotonic() - started < self.config['timeout']['common']:
+            if not any(j for j in kwargs['job_queue'].jobs() if (j.name or '').startswith(JobName.CHECKER)):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            raise TimeoutError()
         await message.reply_text(Notification.MESSAGE_DONE)
 
     @checkvars
@@ -537,10 +547,12 @@ class BugSignalService:
                 except Exception as ex:
                     self.logger.error(str(ex))
             case ListenerCheckError():
-                message = Notification.MESSAGE_CHECK_FAILED % (*context.error.args,)
+                *args, caller_chat_id = context.error.args
+                message = Notification.MESSAGE_CHECK_FAILED % (*args,)
+                subscribers = {*self.__developers, caller_chat_id} if caller_chat_id is not None else self.__developers
                 tasks = tuple(
                     asyncio.create_task(self.__send_messages(context.bot, chat_id, (message,)))
-                    for chat_id in self.__developers
+                    for chat_id in subscribers
                 )
             # SQL error
             case sqlex.DBAPIError():
@@ -631,7 +643,7 @@ class BugSignalService:
         current_listeners: MutableMapping[int, Job] = {}
         for job in job_queue.jobs():
             try:
-                if isinstance(job.data, Listener):
+                if isinstance(job.data, Listener) and (job.name or '').startswith(JobName.LISTENER):
                     current_listeners[job.data.identifier] = job
             except Exception as ex:
                 _args = (job.name, None, *self.__exception_args(ex))
@@ -696,7 +708,7 @@ class BugSignalService:
             else:
                 subscribers = ()
         except Exception as ex:
-            raise ListenerCheckError(listener.identifier, listener.name) from ex
+            raise ListenerCheckError(listener.identifier, listener.name, context.job.chat_id) from ex
         else:
             if not messages:
                 self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener.identifier, _updates_from)

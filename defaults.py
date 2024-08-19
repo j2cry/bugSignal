@@ -6,9 +6,9 @@ from copy import deepcopy
 
 # Telegram emoji
 class Emoji(enum.StrEnum):
-    ENABLED = '\u2714'
-    DISABLED = '\u2716'
-    REJECTED = '\u26D4'
+    ENABLED = '✔'
+    DISABLED = '❌'
+    REJECTED = '⛔'
     FOX = '🦊'
     ZOMBIE = '🧟'
 
@@ -34,7 +34,6 @@ class LoggerConfig(typing.TypedDict):
 class TimeoutConfig(typing.TypedDict):
     """ Timeout configuration """
     common: int | float
-    start: int | float
     close: int | float
     actualizerCron: str
     retryInterval: int | float
@@ -63,7 +62,6 @@ DEFAULT = Configuration(
     ),
     timeout=TimeoutConfig(
         common=300,
-        start=2.5,
         close=5,
         actualizerCron='5 0 * * *',
         retryInterval=15,
@@ -99,7 +97,7 @@ class Notification:
     MESSAGE_DONE = '✔ done.'
     MESSAGE_LISTENER_ERROR = '❗❗❗ UFO has stolen your listener [{name}] 👽💀👻😱'
     MESSAGE_SOMETHING_WRONG = "I think i'm gonna throw up 🤢. Check my log please."
-    MESSAGE_CHECK_FAILED = "❌ Check failed for listener %s [%s]"
+    MESSAGE_CHECK_FAILED = "❌ Check failed for listener %s - %s"
     MESSAGE_SHUTDOWN = 'Shutdown job was scheduled. See ya! 👋'
 
     LOG_CHECK_LISTENER = 'Checking for updates listener %s [%s] from timestamp %s'

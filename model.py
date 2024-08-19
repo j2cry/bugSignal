@@ -33,6 +33,7 @@ class UserRole(enum.IntFlag):
 class JobName(enum.StrEnum):
     ACTUALIZER = enum.auto()
     LISTENER = enum.auto()
+    CHECKER = enum.auto()
 
 
 # --------------------------------------------------------------------------------
@@ -87,8 +88,6 @@ class CustomTableRow:
     def __new__(cls, **kwargs) -> RowLike:
         _class = namedtuple('_CustomTableRow', kwargs.keys())
         instance = _class(**kwargs)
-        # setattr(instance, '__getattr__', cls.__getattr__)
-        # instance.__getattr__ = cls.__getattr__
         return instance     # type: ignore
 
     def __getattr__(self, name: str) -> typing.Any:

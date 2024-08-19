@@ -82,7 +82,7 @@ if __name__ == '__main__':
     application.add_error_handler(bot._onerror)
 
     with bot.run():
-        application.job_queue.run_once(bot._onstart, when=config['timeout']['start'])
+        application.job_queue.run_once(bot._onstart, when=0, job_kwargs={'misfire_grace_time': None})
         application.run_polling()
     logger.info('Application closed')
     for handler in logger.handlers:
