@@ -42,7 +42,7 @@ from menupage import (
     MenuError,
     MenuPattern,
 )
-from listener import Listener, ListenerFactory
+from listener import Listener, ListenerFactory, ListenerCheckError
 from model import (
     UserRole,
     JobName,
@@ -524,8 +524,11 @@ class BugSignalService:
     # event handlers
     async def _onerror(self, update: object, context: CCT):
         """ Error handler """
-        self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(context.error))
-        notify = False
+        error = context.error
+        while error is not None:
+            self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(error))
+            error = error.__cause__
+        tasks = ()
         match context.error:
             # drop menu inline
             case MenuError() if isinstance(update, Update) and update.effective_message is not None:
@@ -533,26 +536,30 @@ class BugSignalService:
                     await update.effective_message.edit_text(str(context.error), reply_markup=None)
                 except Exception as ex:
                     self.logger.error(str(ex))
+            case ListenerCheckError():
+                message = Notification.MESSAGE_CHECK_FAILED % (*context.error.args,)
+                tasks = tuple(
+                    asyncio.create_task(self.__send_messages(context.bot, chat_id, (message,)))
+                    for chat_id in self.__developers
+                )
+            # SQL error
+            case sqlex.DBAPIError():
+                tasks = tuple(
+                    asyncio.create_task(self.__send_messages(context.bot, chat_id, (Notification.MESSAGE_SOMETHING_WRONG,)))
+                    for chat_id in self.__developers
+                )
             # # http error
             # case httpx.NetworkError():
             #     ...
-            # SQL error
-            case sqlex.DBAPIError():
-                notify = True
             # unhandled error
             case _:
                 ...
-        # if notify and self.config['owlmode']:
-        if notify:
-            tasks = tuple(
-                asyncio.create_task(self.__send_messages(context.bot, chat_id, (Notification.MESSAGE_SOMETHING_WRONG,)))
-                for chat_id in self.__developers
-            )
-            if tasks:
-                try:
-                    await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
-                except Exception as ex:
-                    self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
+        # await for tasks
+        if tasks:
+            try:
+                await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
+            except Exception as ex:
+                self.logger.error(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
 
     async def _onstart(self, context: CCT):
         """ On start event """
@@ -571,7 +578,7 @@ class BugSignalService:
 
     # --------------------------------------------------------------------------------
     # private methods
-    def __exception_args(self, ex: Exception | None) -> tuple[str, str, str]:
+    def __exception_args(self, ex: Exception | BaseException | None) -> tuple[str, str, str]:
         """ Collect exception info for logging """
         return (
             'UnknownException' if ex is None else ex.__class__.__name__,
@@ -624,9 +631,8 @@ class BugSignalService:
         current_listeners: MutableMapping[int, Job] = {}
         for job in job_queue.jobs():
             try:
-                if isinstance(job.data, Listener) and job.name is not None:
-                    listener_id = int(job.name.replace(JobName.LISTENER, ''))
-                    current_listeners[listener_id] = job
+                if isinstance(job.data, Listener):
+                    current_listeners[job.data.identifier] = job
             except Exception as ex:
                 _args = (job.name, None, *self.__exception_args(ex))
                 self.logger.error(Notification.ERROR_LISTENER, *_args)
@@ -681,35 +687,32 @@ class BugSignalService:
         assert context.job is not None and isinstance(listener := context.job.data, Listener), \
             '[__check_listener] job is broken or is not a listener job'
         assert context.job_queue is not None, '[__check_listener] job_queue is None'
-        listener_id = int((context.job.name or '').replace(JobName.LISTENER, ''))
         expired, scheduled = listener.next_t
         _updates_from = listener.updated
-        self.logger.debug(Notification.LOG_CHECK_LISTENER, listener.name, listener_id, listener.updated)
+        self.logger.debug(Notification.LOG_CHECK_LISTENER, listener.name, listener.identifier, listener.updated)
         try:
             if messages := listener.check():
-                subscribers = self.db.subscribers(listener_id, active_only=True)
+                subscribers = self.db.subscribers(listener.identifier, active_only=True)
             else:
                 subscribers = ()
-        except:
-            scheduled = self.config['timeout']['retryInterval']
-            raise
+        except Exception as ex:
+            raise ListenerCheckError(listener.identifier, listener.name) from ex
         else:
             if not messages:
-                self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener_id, _updates_from)
+                self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener.identifier, _updates_from)
                 return
             tasks = tuple(asyncio.create_task(self.__send_messages(context.bot, chat.chat_id, messages))
                           for chat in subscribers)
             if tasks:
                 await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
         finally:
-            # reschedule if expired or check failed
-            if not expired and isinstance(scheduled, dt.datetime):
-                return
-            job = context.job_queue.run_once(self.__check_listener,
-                                             when=scheduled,
-                                             name=f'{JobName.LISTENER}{listener_id}',
-                                             data=listener)
-            self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+            # reschedule if expired
+            if expired:
+                job = context.job_queue.run_once(self.__check_listener,
+                                                 when=scheduled,
+                                                 name=f'{JobName.LISTENER}{listener.identifier}',
+                                                 data=listener)
+                self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
 
     # async def message(self, update: Update, context: CallbackContext):
     #     logging.debug('start command received')

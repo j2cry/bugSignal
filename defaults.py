@@ -99,6 +99,7 @@ class Notification:
     MESSAGE_DONE = '✔ done.'
     MESSAGE_LISTENER_ERROR = '❗❗❗ UFO has stolen your listener [{name}] 👽💀👻😱'
     MESSAGE_SOMETHING_WRONG = "I think i'm gonna throw up 🤢. Check my log please."
+    MESSAGE_CHECK_FAILED = "❌ Check failed for listener %s [%s]"
     MESSAGE_SHUTDOWN = 'Shutdown job was scheduled. See ya! 👋'
 
     LOG_CHECK_LISTENER = 'Checking for updates listener %s [%s] from timestamp %s'

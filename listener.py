@@ -7,6 +7,13 @@ from collections import defaultdict
 from croniter import croniter
 
 
+# ============================ Exceptions definition ===========================
+class ListenerCheckError(Exception):
+    """ Listener check exception """
+    def __init__(self, listener_id: int, title: str) -> None:
+        super().__init__(listener_id, title)
+
+
 # ============================ Factory definition ==============================
 class CronMixin(typing.Protocol):
     @property
@@ -15,6 +22,7 @@ class CronMixin(typing.Protocol):
 
 @typing.runtime_checkable
 class Listener(CronMixin, typing.Protocol):
+    identifier: int
     name: str
     updated: dt.datetime
     def inherit(self, other: typing.Self): ...
@@ -61,9 +69,11 @@ class CronSchedule:
 
 class BaseListener:
     def __init__(self,
-                 title: str = 'unnamed',
+                 listener_id: int,
+                 title: str,
                  ):
         """ Base listener init """
+        self.identifier = listener_id
         self.name = title
         self.updated = dt.datetime.now()
 
@@ -83,6 +93,7 @@ class FileSystemListener(BaseListener, CronSchedule):
         when `None`, the path will be tracked as a single folder \
     """
     def __init__(self,
+                 listener_id: int,
                  title: str,
                  cronstring: str,
                  tzinfo: dt.tzinfo,
@@ -90,7 +101,7 @@ class FileSystemListener(BaseListener, CronSchedule):
                  mask: str | None = None,
                  **kwargs: typing.Any
                  ):
-        BaseListener.__init__(self, title)
+        BaseListener.__init__(self, listener_id, title)
         CronSchedule.__init__(self, cronstring, tzinfo)
         self._state: dict[pathlib.Path, set[str] | dt.datetime | None] = defaultdict(lambda: None)
         self._path = path
@@ -184,6 +195,7 @@ class SQLListener(BaseListener, CronSchedule):
         otherwise it will be set as current timestamp.
     """
     def __init__(self,
+                 listener_id: int,
                  title: str,
                  cronstring: str,
                  tzinfo: dt.tzinfo,
@@ -192,7 +204,7 @@ class SQLListener(BaseListener, CronSchedule):
                  continual: bool = True,
                  **kwargs: typing.Any
                  ):
-        BaseListener.__init__(self, title)
+        BaseListener.__init__(self, listener_id, title)
         CronSchedule.__init__(self, cronstring, tzinfo)
         self.__engine = sa.create_engine(connection, poolclass=sa.NullPool)
         self.__query = sa.text(query)
