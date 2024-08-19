@@ -44,15 +44,12 @@ class Database:
         # map SQL structure
         metadata = sa.MetaData(schema)
         self.__registry = orm.registry(metadata=metadata)
-        # self.__mappers = {}
         for _class in _definitions:
-            # self.__mappers[_class] = self.__registry.map_declaratively(_class)
             self.__registry.map_declaratively(_class)
-        # create schema NOTE does not work for MSSQL
+        # create schema
         with self.__engine.begin() as session:
             if schema and not session.dialect.has_schema(session, schema):
                 session.execute(sa.schema.CreateSchema(schema))
-            # session.execute(sa.schema.CreateSchema(schema, if_not_exists=True))   # this does not work for MSSQL
         metadata.create_all(self.__engine)
         LISTENER, CHAT, SUBSCRIPTION = _definitions
 
