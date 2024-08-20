@@ -123,7 +123,7 @@ def allowed_for(roles: UserRole, chat_admin: bool):
             administrators = ({_admin.user for _admin in await chat.get_administrators()}
                               if chat.type != ChatType.PRIVATE
                               else set())
-            if chat_admin and chat.type != ChatType.PRIVATE and user in administrators:
+            if chat_admin and user in administrators and user_roles:
                 return await method(self, update, context, *args, **kwargs)
             # restrict command execution
             self.logger.warning(Notification.LOG_COMMAND_REJECTED % (user.name, user.id))
