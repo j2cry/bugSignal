@@ -6,7 +6,7 @@ from copy import deepcopy
 
 # Telegram emoji
 class Emoji(enum.StrEnum):
-    ENABLED = '✔'
+    ENABLED = '🟢'
     DISABLED = '❌'
     REJECTED = '⛔'
     FOX = '🦊'
@@ -89,13 +89,13 @@ def build_configuration(cf: typing.Mapping[typing.Any, typing.Any]) -> Configura
 # --------------------------------------------------------------------------------
 class Notification:
     MESSAGE_QUERY_ANSWER = '👻'
-    MESSAGE_COMMAND_REJECTED = f'{Emoji.REJECTED} Command rejected for %s.'
-    MESSAGE_CHAT_INFORMATION_SAVED = f'{Emoji.ENABLED} Current chat information saved.'
+    MESSAGE_COMMAND_REJECTED = f'⛔ Command rejected for %s.'
+    MESSAGE_CHAT_INFORMATION_SAVED = f'✅ Current chat information saved.'
     MESSAGE_MENU_CLOSED = 'Menu closed.'
     MESSAGE_MENU_OPENED = 'Menu is already opened.'
     MESSAGE_CHECK_LISTENERS = 'Forcing listeners...'
-    MESSAGE_DONE = '✔ done.'
-    MESSAGE_LISTENER_ERROR = '❗❗❗ UFO has stolen your listener [{name}] 👽💀👻😱'
+    MESSAGE_DONE = '✅ done.'
+    # MESSAGE_LISTENER_ERROR = '❗❗❗ UFO has stolen your listener [{name}] 👽💀👻😱'
     MESSAGE_SOMETHING_WRONG = "I think i'm gonna throw up 🤢. Check my log please."
     MESSAGE_CHECK_FAILED = "❌ Check failed for listener %s - %s"
     MESSAGE_SHUTDOWN = 'Shutdown job was scheduled. See ya! 👋'
