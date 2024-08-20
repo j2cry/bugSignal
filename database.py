@@ -93,7 +93,7 @@ class Database:
         self.__insert_or_update(CHAT, CHAT.chat_id == chat_id, chat_id=chat_id, **values)
 
     def listeners(self, active_only: bool = False) -> typing.Sequence[ListenerTableRow]:
-        """ Request for all listeners for specified chat """
+        """ Request for listeners """
         query = sa.select(LISTENER).where(LISTENER.active.in_((True, active_only))).order_by(LISTENER.listener_id)
         self.__logger.debug(str(query))
         with self.__engine.connect() as conn:
@@ -106,13 +106,13 @@ class Database:
     def subscriptions(self, chat_id: int) -> tuple[str, typing.Sequence[SubscriptionTableRow]]:
         """"""
         with self.__engine.connect() as conn:
-            query = sa.select(CHAT.title).where(CHAT.chat_id == chat_id)
+            query = sa.select(CHAT.name).where(CHAT.chat_id == chat_id)
             self.__logger.debug(str(query))
             chat = conn.execute(query).first()
             if chat is None:
                 return '', ()
             query = sa.select(
-                LISTENER.title,
+                LISTENER.name,
                 SUBSCRIPTION.subscription_id,
                 sa.case((SUBSCRIPTION.chat_id == None, chat_id),
                         else_=SUBSCRIPTION.chat_id
@@ -125,10 +125,10 @@ class Database:
                    isouter=True,
             ).where(
                 LISTENER.active == True
-            ).order_by(LISTENER.title)
+            ).order_by(LISTENER.name)
 
             self.__logger.debug(str(query))
-            return chat.title, tuple(conn.execute(query).all()) # type: ignore
+            return chat.name, tuple(conn.execute(query).all()) # type: ignore
 
     @typing.overload
     def set_subscription(self, subscription_id: int, **values: typing.Unpack[SubscriptionValues]) -> None: ...
@@ -169,9 +169,9 @@ class Database:
             raise ValueError('Incorrect stored chat')
         # build roles list
         user_roles = UserRole(stored_chat.role)
-        return (stored_chat.title,
+        return (stored_chat.name,
                 tuple(CustomTableRow(chat_id=stored_chat.chat_id,
-                                     title=role.name,
+                                     name=role.name,
                                      role=user_roles ^ role,
                                      active=role in user_roles)
                       for role in UserRole)

@@ -61,13 +61,13 @@ class ValidatedContext(typing.TypedDict):
 # --------------------------------------------------------------------------------
 # SQL insert/update row typing
 class ChatValues(typing.TypedDict):
-    title: typing.NotRequired[str]
+    name: typing.NotRequired[str]
     type: typing.NotRequired[str]
     role: typing.NotRequired[int]
     active: typing.NotRequired[bool]
 
 class ListenerValues(typing.TypedDict):
-    title: typing.NotRequired[str]
+    name: typing.NotRequired[str]
     classname: typing.NotRequired[str]
     parameters: typing.NotRequired[str]
     active: typing.NotRequired[bool]
@@ -99,7 +99,7 @@ class _ListenerTable(typing.Protocol):
     """ Specific source for receiving messages """
     __tablename__: str
     listener_id: sa.Column[int]
-    title: sa.Column[str]
+    name: sa.Column[str]
     classname: sa.Column[str]
     parameters: sa.Column[str]
     cronstring: sa.Column[str]
@@ -109,10 +109,10 @@ class _ListenerTable(typing.Protocol):
 class ListenerTableRow(RowLike, typing.Protocol):
     """ Listener table row protocol """
     listener_id: int
-    title: str
+    name: str
     classname: typing.Literal['FileSystemListener', 'SQLListener']
     parameters: str
-    cronstring: str
+    cronstring: str | None
     active: bool
     created: dt.datetime
     updated: dt.datetime
@@ -121,7 +121,7 @@ class _ChatTable(typing.Protocol):
     """ Telegram chat (group or private) """
     __tablename__: str
     chat_id: sa.Column[int]
-    title: sa.Column[str]
+    name: sa.Column[str]
     role: sa.Column[int]
     type: sa.Column[str]
     active: sa.Column[bool]
@@ -130,7 +130,7 @@ class _ChatTable(typing.Protocol):
 class ChatTableRow(RowLike, typing.Protocol):
     """ Chat table row protocol """
     chat_id: int
-    title: str
+    name: str
     role: int
     type: str
     active: bool
@@ -177,20 +177,20 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
             class _MSSQL_Listener:
                 __tablename__ = 'listener'
                 listener_id = sa.Column(mssql.INTEGER, primary_key=True, autoincrement="auto")
-                title = sa.Column(mssql.VARCHAR(500), nullable=False)
+                name = sa.Column(mssql.VARCHAR(500), nullable=False)
                 classname = sa.Column(mssql.VARCHAR(50), nullable=False)
                 parameters = sa.Column(mssql.VARCHAR, nullable=False, server_default=sa.literal(r'{}'))
-                cronstring = sa.Column(mssql.VARCHAR(1000), nullable=False)
-                active = sa.Column(mssql.BIT, server_default=sa.literal(True))
+                cronstring = sa.Column(mssql.VARCHAR(100))
+                active = sa.Column(mssql.BIT, nullable=False, server_default=sa.literal(True))
                 created = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
             class _MSSQL_Chat:
                 __tablename__ = 'chat'
                 chat_id = sa.Column(mssql.BIGINT, primary_key=True, autoincrement=False)
-                title = sa.Column(mssql.VARCHAR(500), nullable=False)
+                name = sa.Column(mssql.VARCHAR(500), nullable=False)
                 role = sa.Column(mssql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.BLOCKED.value))
                 type = sa.Column(mssql.VARCHAR(10), nullable=False)
-                active = sa.Column(mssql.BIT, server_default=sa.literal(True))
+                active = sa.Column(mssql.BIT, nullable=False, server_default=sa.literal(True))
                 created = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
             class _MSSQL_Subscription:
@@ -198,7 +198,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 subscription_id = sa.Column(mssql.BIGINT, primary_key=True)
                 chat_id = sa.Column(mssql.BIGINT, sa.ForeignKey(_MSSQL_Chat.chat_id), nullable=False)
                 listener_id = sa.Column(mssql.INTEGER, sa.ForeignKey(_MSSQL_Listener.listener_id), nullable=False)
-                active = sa.Column(mssql.BIT, server_default=sa.literal(True))
+                active = sa.Column(mssql.BIT, nullable=False, server_default=sa.literal(True))
                 created = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(mssql.DATETIME, nullable=False, server_default=sa.func.current_timestamp())
 
@@ -209,20 +209,20 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
             class _PostgreSQL_Listener:
                 __tablename__ = 'listener'
                 listener_id = sa.Column(psql.INTEGER, primary_key=True, autoincrement="auto")
-                title = sa.Column(psql.VARCHAR(500), nullable=False)
+                name = sa.Column(psql.VARCHAR(500), nullable=False)
                 classname = sa.Column(psql.VARCHAR(50), nullable=False)
                 parameters = sa.Column(psql.VARCHAR, nullable=False, server_default=sa.literal(r'{}'))
-                cronstring = sa.Column(psql.VARCHAR(1000), nullable=False)
-                active = sa.Column(psql.BOOLEAN, server_default=sa.literal(True))
+                cronstring = sa.Column(psql.VARCHAR(100))
+                active = sa.Column(psql.BOOLEAN, nullable=False, server_default=sa.literal(True))
                 created = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
             class _PostgreSQL_Chat:
                 __tablename__ = 'chat'
                 chat_id = sa.Column(psql.BIGINT, primary_key=True, autoincrement=False)
-                title = sa.Column(psql.VARCHAR(500), nullable=False)
+                name = sa.Column(psql.VARCHAR(500), nullable=False)
                 role = sa.Column(psql.SMALLINT, nullable=False, server_default=sa.literal(UserRole.BLOCKED.value))
                 type = sa.Column(psql.VARCHAR(10), nullable=False)
-                active = sa.Column(psql.BOOLEAN, server_default=sa.literal(True))
+                active = sa.Column(psql.BOOLEAN, nullable=False, server_default=sa.literal(True))
                 created = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
             class _PostgreSQL_Subscription:
@@ -230,7 +230,7 @@ def definitions_loader(dialect: str) -> tuple[ListenerTable,
                 subscription_id = sa.Column(psql.BIGINT, primary_key=True)
                 chat_id = sa.Column(psql.BIGINT, sa.ForeignKey(_PostgreSQL_Chat.chat_id), nullable=False)
                 listener_id = sa.Column(psql.INTEGER, sa.ForeignKey(_PostgreSQL_Listener.listener_id), nullable=False)
-                active = sa.Column(psql.BOOLEAN, server_default=sa.literal(True))
+                active = sa.Column(psql.BOOLEAN, nullable=False, server_default=sa.literal(True))
                 created = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
                 updated = sa.Column(psql.TIMESTAMP, nullable=False, server_default=sa.func.current_timestamp())
 

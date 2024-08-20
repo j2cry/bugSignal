@@ -99,11 +99,15 @@ class Notification:
     MESSAGE_SOMETHING_WRONG = "I think i'm gonna throw up 🤢. Check my log please."
     MESSAGE_CHECK_FAILED = "❌ Check failed for listener %s - %s"
     MESSAGE_SHUTDOWN = 'Shutdown job was scheduled. See ya! 👋'
+    MESSAGE_SHUTDOWN_CONFIRM = ('Are you sure you want to shutdown the tracker? '
+                                '<b>It is impossible to turn it back on without access to the server.</b>')
+    MESSAGE_JOB_STATE = '📌 %s @ %s'
+    MESSAGE_SELF_STATE = '[%s] Self state:\n%s\nActive listeners: %s'
 
-    LOG_CHECK_LISTENER = 'Checking for updates listener %s [%s] from timestamp %s'
-    LOG_NO_UPDATES = 'Listener %s [%s] has no updates from timestamp %s'
-    LOG_JOB_SCHEDULED = 'Job %s scheduled @ %s'
-    LOG_JOB_UPDATED = 'Job %s updated. Next run @ %s'
+    LOG_CHECK_LISTENER = 'Checking for updates in listener %s [%s] from timestamp %s'
+    LOG_NO_UPDATES = 'Listener %s [%s] has no updates'
+    LOG_JOB_SCHEDULED = 'Job %s for %s [%s] scheduled @ %s'
+    LOG_LISTENER_INHERITED = 'Listener %s [%s] inherited'
     LOG_COMMAND_REJECTED = 'User %s [%s] is trying to perform an unsafe operation'
     LOG_SENT_FROM_TO = '%s sent a fox to %s'
     LOG_SHUTDOWN = 'The user %s [%s] initiated the shutdown of the service'

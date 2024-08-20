@@ -6,12 +6,12 @@ import logging
 import os
 import pytz
 import random
+import re
 import signal
 import sqlalchemy.exc as sqlex
 import time
 import traceback
 from contextlib import contextmanager
-from croniter import croniter
 from telegram import Update
 from telegram.ext import Job
 from telegram.constants import ChatType
@@ -23,7 +23,7 @@ from typing import (
     Coroutine,
     MutableMapping,
     Sequence,
-    Unpack
+    Unpack,
 )
 
 from database import Database
@@ -32,7 +32,13 @@ from defaults import (
     Emoji,
     Environ,
     Notification,
-    DEFAULT
+    DEFAULT,
+)
+from listener import (
+    CronSchedule,
+    Listener,
+    ListenerCheckError,
+    ListenerFactory,
 )
 from menupage import (
     Action,
@@ -42,14 +48,13 @@ from menupage import (
     MenuError,
     MenuPattern,
 )
-from listener import Listener, ListenerFactory, ListenerCheckError
 from model import (
     UserRole,
     JobName,
     CustomTableRow,
     # UD, CD, BD, BT, CCT, CT,
     BT, CCT,
-    ValidatedContext
+    ValidatedContext,
 )
 
 
@@ -142,8 +147,8 @@ class BugSignalService:
         except:
             self.timezone = pytz.UTC
             self.logger.warning(Notification.LOG_INCORRECT_TIMEZONE, self.config['timezone'])
-        self.__actualizer_cron = croniter(self.config['timeout']['actualizerCron'],
-                                          dt.datetime.now(self.timezone))
+        self.__actualizer_cron = CronSchedule(self.config['timeout']['actualizerCron'], self.timezone)
+        self.__listeners: MutableMapping[int, Listener] = {}
 
     @contextmanager
     def run(self, *args, **kwargs):
@@ -156,7 +161,7 @@ class BugSignalService:
     async def start(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Remember chat id """
         self.db.set_chat(kwargs['chat'].id,
-                         title=kwargs['chat'].username or kwargs['chat'].effective_name or str(kwargs['chat'].id),
+                         name=kwargs['chat'].username or kwargs['chat'].effective_name or str(kwargs['chat'].id),
                          type=kwargs['chat'].type)
         await kwargs['message'].reply_text(Notification.MESSAGE_CHAT_INFORMATION_SAVED)
 
@@ -177,18 +182,16 @@ class BugSignalService:
         await context.bot.send_message(chat_id, Emoji.ZOMBIE)
 
     @checkvars
-    @allowed_for(UserRole.ACTIVE, chat_admin=False)
+    @allowed_for(UserRole.ACTIVE, chat_admin=True)
     async def check(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Force check all listeners for updates """
         message = await kwargs['message'].reply_text(Notification.MESSAGE_CHECK_LISTENERS)
-        for job in kwargs['job_queue'].jobs():
-            if isinstance(listener := job.data, Listener) and (job.name or '').startswith(JobName.LISTENER):
-                kwargs['job_queue'].run_once(self.__check_listener,
-                                             when=0,
-                                             data=listener,
-                                             name=f'{JobName.CHECKER}{listener.identifier}',
-                                             chat_id=kwargs['chat'].id,
-                                             job_kwargs={'misfire_grace_time': None})
+        for listener in self.__listeners.values():
+            kwargs['job_queue'].run_once(self.__check_listener,
+                                         when=0,
+                                         name=f'{JobName.CHECKER}{listener.id}',
+                                         chat_id=kwargs['chat'].id,
+                                         job_kwargs={'misfire_grace_time': None})
         # await for all forced listeners done
         started = time.monotonic()
         while time.monotonic() - started < self.config['timeout']['common']:
@@ -205,12 +208,20 @@ class BugSignalService:
         """ Get current bugSignal state """
         def _jobformat(job: Job[CCT]):
             """ Return formatted job schedule """
-            # next_t = job.next_t.replace(microsecond=0, tzinfo=None) if job.next_t else None
-            next_t = job.next_t.replace(microsecond=0) if job.next_t else None
-            return f'{getattr(job.data, "name", job.name)} @ {next_t}'
-        TIMESTAMP = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        STATE = f'[{TIMESTAMP}] Self state:\n' + '\n'.join(map(_jobformat, kwargs['job_queue'].jobs()))
-        await kwargs['message'].reply_text(STATE)
+            found = re.search(r'\d+', job.name or '')
+            _args = (
+                self.__listeners.get(int(found.group()), job).name if found else job.name,
+                job.next_t.replace(microsecond=0) if job.next_t else None
+            )
+            return Notification.MESSAGE_JOB_STATE % (*_args,)
+        # collect self state args
+        _jobs = sorted(kwargs['job_queue'].jobs(), key=lambda j: j.name or '')
+        _args = (
+            dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            '\n'.join(map(_jobformat, _jobs)),
+            len(self.__listeners),
+        )
+        await kwargs['message'].reply_text(Notification.MESSAGE_SELF_STATE % (*_args,))
 
     @checkvars
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, chat_admin=False)
@@ -227,12 +238,12 @@ class BugSignalService:
         if (menupage := kwargs['chat_data'].get('menupage')) is None:
             raise MenuError(Notification.ERROR_MENU_PAGE)
         markup = menupage.markup
-        if kwargs['message'].text == menupage.title and kwargs['message'].reply_markup == markup:
+        if kwargs['message'].text == menupage.name and kwargs['message'].reply_markup == markup:
             return
         try:
-            await kwargs['message'].edit_text(menupage.title, reply_markup=markup)
+            await kwargs['message'].edit_text(menupage.name, reply_markup=markup)
         except BadRequest:
-            await context.bot.send_message(kwargs['chat'].id, menupage.title, reply_markup=markup)
+            await context.bot.send_message(kwargs['chat'].id, menupage.name, reply_markup=markup)
 
     @checkvars
     async def __menu_commons(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
@@ -281,17 +292,17 @@ class BugSignalService:
             # build menu
             menupage = InlineMenuPage(
                 pattern=MenuPattern.MAIN,
-                title='bugSignal admin panel',
-                items=(CustomTableRow(title='Chats',
+                name='bugSignal admin panel',
+                items=(CustomTableRow(name='Chats',
                                       action=Action.CHATS,
                                       pattern=MenuPattern.CHATS),
-                       CustomTableRow(title='Listeners',
+                       CustomTableRow(name='Listeners',
                                       action=Action.LISTENERS,
                                       pattern=MenuPattern.LISTENERS),
-                       CustomTableRow(title='Subscriptions',
+                       CustomTableRow(name='Subscriptions',
                                       action=Action.SUBSCRIPTIONS,
                                       pattern=MenuPattern.SUBSCRIPTIONS),
-                       CustomTableRow(title='Private roles',
+                       CustomTableRow(name='Private roles',
                                       action=Action.ROLES,
                                       pattern=MenuPattern.ROLES),
                        ),
@@ -300,9 +311,9 @@ class BugSignalService:
             chat_data['menupage'] = menupage
             markup = menupage.markup
             try:
-                await kwargs['message'].edit_text(menupage.title, reply_markup=markup)
+                await kwargs['message'].edit_text(menupage.name, reply_markup=markup)
             except BadRequest:
-                await context.bot.send_message(kwargs['chat'].id, menupage.title, reply_markup=markup)
+                await context.bot.send_message(kwargs['chat'].id, menupage.name, reply_markup=markup)
             return
         return await self.__menu_commons(update, context)
 
@@ -321,7 +332,7 @@ class BugSignalService:
             case {CallbackKey.ACTION: Action.LISTENERS}:
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.LISTENERS,
-                    title='Available listeners',
+                    name='Available listeners',
                     items=self.db.listeners(),
                     items_action=Action.SWITCH,
                     checkmark=True,
@@ -356,7 +367,7 @@ class BugSignalService:
             case {CallbackKey.ACTION: Action.CHATS}:
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.CHATS,
-                    title='Available chats',
+                    name='Available chats',
                     items=self.db.chats(exclude=kwargs['chat'].id),
                     items_action=Action.SWITCH,
                     checkmark=True,
@@ -398,7 +409,7 @@ class BugSignalService:
             case {CallbackKey.ACTION: Action.SUBSCRIPTIONS}:
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.SUBSCRIPTIONS,
-                    title='Choose a chat to manage subscriptions',
+                    name='Choose a chat to manage subscriptions',
                     items=available_chats,
                     items_action=Action.LISTENERS,
                     additional_buttons=Button.NAVIGATION | Button.BACK | Button.CLOSE,
@@ -408,10 +419,10 @@ class BugSignalService:
             # prepare listeners list for chat with checked subscriptions
             case {CallbackKey.ACTION: Action.LISTENERS,
                   CallbackKey.CHAT_ID: int(chat_id)}:
-                title, subscriptions = self.db.subscriptions(chat_id)
+                name, subscriptions = self.db.subscriptions(chat_id)
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.SUBSCRIPTIONS,
-                    title=f'Set subscriptions for {title}',
+                    name=f'Set subscriptions for {name}',
                     items=subscriptions,
                     items_action=Action.SWITCH,
                     checkmark=True,
@@ -448,7 +459,7 @@ class BugSignalService:
                 # build menu
                 menupage = InlineMenuPage(
                     pattern=MenuPattern.ROLES,
-                    title='Available private chats',
+                    name='Available private chats',
                     items=self.db.chats(active_only=True,
                                         of_types=ChatType.PRIVATE,
                                         exclude=kwargs['chat'].id),
@@ -463,7 +474,7 @@ class BugSignalService:
                 username, roles = self.db.roles(chat_id)
                 menupage = InlineMenuPage(
                     MenuPattern.ROLES,
-                    title=f'Set roles for {username}',
+                    name=f'Set roles for {username}',
                     items=roles,
                     items_action=Action.SWITCH,
                     checkmark=True,
@@ -497,21 +508,21 @@ class BugSignalService:
             # build confirmation menu
             menupage = InlineMenuPage(
                 pattern=MenuPattern.SHUTDOWN,
-                title='Are you sure you want to shutdown the tracker? <b>It is impossible to turn it back on without access to the server.</b>',
-                items=(CustomTableRow(title=f'{Emoji.ENABLED} Yes',
+                name=Notification.MESSAGE_SHUTDOWN_CONFIRM,
+                items=(CustomTableRow(name=f'{Emoji.ENABLED} Yes',
                                       action=Action.CONFIRM),
-                       CustomTableRow(title=f'{Emoji.DISABLED} No',
+                       CustomTableRow(name=f'{Emoji.DISABLED} No',
                                       action=Action.CLOSE),
                       ),
             )
             chat_data['menupage'] = menupage
             markup = menupage.markup
             try:
-                await kwargs['message'].edit_text(menupage.title,
+                await kwargs['message'].edit_text(menupage.name,
                                                   parse_mode='HTML',
                                                   reply_markup=markup)
             except BadRequest:
-                await context.bot.send_message(kwargs['chat'].id, menupage.title,
+                await context.bot.send_message(kwargs['chat'].id, menupage.name,
                                                parse_mode='HTML',
                                                reply_markup=markup)
             return
@@ -557,7 +568,9 @@ class BugSignalService:
             # SQL error
             case sqlex.DBAPIError():
                 tasks = tuple(
-                    asyncio.create_task(self.__send_messages(context.bot, chat_id, (Notification.MESSAGE_SOMETHING_WRONG,)))
+                    asyncio.create_task(self.__send_messages(context.bot,
+                                                             chat_id,
+                                                             (Notification.MESSAGE_SOMETHING_WRONG,)))
                     for chat_id in self.__developers
                 )
             # # http error
@@ -636,95 +649,84 @@ class BugSignalService:
     async def __actualize(self, context: CCT):
         """ Actualize listeners """
         assert (job_queue := context.job_queue) is not None, '[__actualize] job_queue is None'
-        # remove all scheduled actualizer jobs
-        for job in job_queue.get_jobs_by_name(JobName.ACTUALIZER):
-            job.schedule_removal()
-        # get running listeners
-        current_listeners: MutableMapping[int, Job] = {}
-        for job in job_queue.jobs():
-            try:
-                if isinstance(job.data, Listener) and (job.name or '').startswith(JobName.LISTENER):
-                    current_listeners[job.data.identifier] = job
-            except Exception as ex:
-                _args = (job.name, None, *self.__exception_args(ex))
-                self.logger.error(Notification.ERROR_LISTENER, *_args)
         # get listeners info from database
         try:
-            _listeners = self.db.listeners()
+            listeners = self.db.listeners()
         except:
-            job = job_queue.run_once(self.__actualize,
-                                     when=self.config['timeout']['retryInterval'],
-                                     name=JobName.ACTUALIZER)
-            self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+            _next_t = self.config['timeout']['retryInterval']
             raise
-        # actualize listeners
-        for row in _listeners:
-            if row.active:
-                # create
-                kwargs = row._asdict()
-                try:
-                    kwargs.update(json.loads(kwargs.pop('parameters')),
-                                  tzinfo=self.timezone)
-                    listener = ListenerFactory(row.classname)(**kwargs)
-                except Exception as ex:
-                    _args = (row.title, row.listener_id, *self.__exception_args(ex))
-                    self.logger.error(Notification.ERROR_LISTENER, *_args)
-                    continue
-                # start
-                if row.listener_id in current_listeners:
-                    # inherit state and replace existing
-                    job = current_listeners[row.listener_id]
-                    if isinstance(job.data, type(listener)):
-                        listener.inherit(job.data)  # type: ignore
-                    job.data = listener
-                    self.logger.info(Notification.LOG_JOB_UPDATED, job.name, job.next_t)
-                else:
-                    # schedule new job
-                    job = job_queue.run_once(self.__check_listener,
-                                            when=listener.next_t[1],
-                                            name=f'{JobName.LISTENER}{row.listener_id}',
-                                            data=listener)
-                    self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
-            # stop running listener
-            elif row.listener_id in current_listeners:
-                current_listeners[row.listener_id].schedule_removal()
-        # schedule next actualize job
-        job = job_queue.run_once(self.__actualize,
-                                 when=self.__actualizer_cron.get_next(dt.datetime),
-                                 name=JobName.ACTUALIZER)
-        self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+        else:
+            _next_t = self.__actualizer_cron.next_t
+        finally:
+            # reschedule actualizer if it is not scheduled
+            if _next_t and not any(job_queue.get_jobs_by_name(JobName.ACTUALIZER)):
+                job = job_queue.run_once(self.__actualize,
+                                         when=_next_t,
+                                         name=JobName.ACTUALIZER,
+                                         job_kwargs={'misfire_grace_time': None})
+                self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, '--', '--', job.next_t)
+        # refresh listeners
+        for row in listeners:
+            current_listener = self.__listeners.pop(row.listener_id, None)
+            jobname = f'{JobName.LISTENER}{row.listener_id}'
+            # remove scheduled listener jobs
+            for job in job_queue.get_jobs_by_name(jobname):
+                job.schedule_removal()
+            # skip inactive
+            if not row.active:
+                continue
+            # create listener
+            kwargs = row._asdict()
+            try:
+                kwargs.update(json.loads(kwargs.pop('parameters')), tzinfo=self.timezone)
+                listener = ListenerFactory(row.classname)(**kwargs)
+            except Exception as ex:
+                _args = (row.name, row.listener_id, *self.__exception_args(ex))
+                self.logger.error(Notification.ERROR_LISTENER, *_args)
+                continue
+            # inherit listener state
+            if isinstance(current_listener, type(listener)):
+                listener.inherit(current_listener)     # type: ignore
+                self.logger.info(Notification.LOG_LISTENER_INHERITED, listener.name, listener.id)
+            # save listener
+            self.__listeners[row.listener_id] = listener
+            # refresh jobs
+            if (_next_t := listener.next_t) is not None:
+                # schedule new job
+                job = job_queue.run_once(self.__check_listener, when=_next_t, name=jobname)
+                self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, listener.name, listener.id, job.next_t)
 
     async def __check_listener(self, context: CCT):
         """ Check for listener updates and send notifications """
-        assert context.job is not None and isinstance(listener := context.job.data, Listener), \
-            '[__check_listener] job is broken or is not a listener job'
         assert context.job_queue is not None, '[__check_listener] job_queue is None'
-        expired, scheduled = listener.next_t
-        _updates_from = listener.updated
-        self.logger.debug(Notification.LOG_CHECK_LISTENER, listener.name, listener.identifier, listener.updated)
+        assert context.job is not None, '[__check_listener] job is None'
+        assert (found := re.search(r'\d+', context.job.name or '')), \
+            '[__check_listener] job.name has no listener id'
+        assert (listener := self.__listeners.get(int(found.group()))) is not None, \
+            f'[__check_listener] unknown listener {found.group()}'
+        # start checking
+        self.logger.debug(Notification.LOG_CHECK_LISTENER, listener.name, listener.id, listener.updated)
         try:
             if messages := listener.check():
-                subscribers = self.db.subscribers(listener.identifier, active_only=True)
+                subscribers = self.db.subscribers(listener.id, active_only=True)
             else:
                 subscribers = ()
         except Exception as ex:
-            raise ListenerCheckError(listener.identifier, listener.name, context.job.chat_id) from ex
-        else:
-            if not messages:
-                self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener.identifier, _updates_from)
-                return
-            tasks = tuple(asyncio.create_task(self.__send_messages(context.bot, chat.chat_id, messages))
-                          for chat in subscribers)
-            if tasks:
-                await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
+            raise ListenerCheckError(listener.id, listener.name, context.job.chat_id) from ex
         finally:
-            # reschedule if expired
-            if expired:
-                job = context.job_queue.run_once(self.__check_listener,
-                                                 when=scheduled,
-                                                 name=f'{JobName.LISTENER}{listener.identifier}',
-                                                 data=listener)
-                self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, job.next_t)
+            # reschedule listener job
+            _jobname = f'{JobName.LISTENER}{listener.id}'
+            if (_next_t := listener.next_t) and not any(context.job_queue.get_jobs_by_name(_jobname)):
+                job = context.job_queue.run_once(self.__check_listener, when=_next_t, name=_jobname)
+                self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, listener.name, listener.id, job.next_t)
+        # send messages
+        if not messages:
+            self.logger.info(Notification.LOG_NO_UPDATES, listener.name, listener.id)
+            return
+        tasks = tuple(asyncio.create_task(self.__send_messages(context.bot, chat.chat_id, messages))
+                      for chat in subscribers)
+        if tasks:
+            await asyncio.wait(tasks, timeout=self.config['timeout']['common'])
 
     # async def message(self, update: Update, context: CallbackContext):
     #     logging.debug('start command received')

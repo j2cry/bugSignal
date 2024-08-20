@@ -73,7 +73,7 @@ class InlineMenuPage:
 
     def __init__(self,
                  pattern: str,
-                 title: str,
+                 name: str,
                  *,
                  items: typing.Sequence[RowLike],
                  checkmark: bool = False,
@@ -84,7 +84,7 @@ class InlineMenuPage:
                  ):
         __assert_message = '`%s` must contain either one or as many values as items'
         self.__pattern = pattern
-        self.title = title
+        self.name = name
         self.items = items
         self.__checkmark = checkmark
         __items_action = (items_action if isinstance(items_action, typing.Sequence)
@@ -116,7 +116,7 @@ class InlineMenuPage:
             self.__page = value
 
     def __set_button_content(self,
-                             title: str,
+                             name: str,
                              content: CallbackContent,
                              pattern: str | None = None,
                              ) -> InlineKeyboardButton:
@@ -124,7 +124,7 @@ class InlineMenuPage:
         _pattern = pattern or self.__pattern
         _button_id = max(self.__callback_content.keys() or [-1]) + 1
         self.__callback_content[_button_id] = content
-        return InlineKeyboardButton(title, callback_data=f'{_pattern}:{_button_id}')
+        return InlineKeyboardButton(name, callback_data=f'{_pattern}:{_button_id}')
 
     @property
     def markup(self) -> InlineKeyboardMarkup:
@@ -146,9 +146,9 @@ class InlineMenuPage:
                 mark = f'{(Emoji.ENABLED if _content.get(CallbackKey.ACTIVE) else Emoji.DISABLED)} '
             else:
                 mark = ''
-            title = mark + (getattr(item, 'title', None) or f'Unknown {n}')
+            name = mark + (getattr(item, 'name', None) or f'Unknown {n}')
             _pattern = _item_dict.get('pattern', meta.pattern)
-            buttons.append((self.__set_button_content(title, _content, _pattern),))
+            buttons.append((self.__set_button_content(name, _content, _pattern),))
 
         # append service buttons
         if Button.NAVIGATION in self.__additional_buttons:

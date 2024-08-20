@@ -10,19 +10,19 @@ from croniter import croniter
 # ============================ Exceptions definition ===========================
 class ListenerCheckError(Exception):
     """ Listener check exception """
-    def __init__(self, listener_id: int, title: str, chat_id: int | None) -> None:
-        super().__init__(listener_id, title, chat_id)
+    def __init__(self, listener_id: int, name: str, chat_id: int | None) -> None:
+        super().__init__(listener_id, name, chat_id)
 
 
 # ============================ Factory definition ==============================
 class CronMixin(typing.Protocol):
     @property
-    def next_t(self) -> tuple[bool, dt.datetime]: ...
+    def next_t(self) -> dt.datetime | None: ...
 
 
 @typing.runtime_checkable
 class Listener(CronMixin, typing.Protocol):
-    identifier: int
+    id: int
     name: str
     updated: dt.datetime
     def inherit(self, other: typing.Self): ...
@@ -50,31 +50,34 @@ class ListenerFactory:
 
 # ============================ Listeners definition ============================
 class CronSchedule:
-    def __init__(self, cronsting: str, tzinfo: dt.tzinfo):
+    def __init__(self, cronsting: str | None, tzinfo: dt.tzinfo):
         """ Init croniter """
-        self.__cron = croniter(cronsting, dt.datetime.now(tzinfo))
+        if cronsting is not None:
+            self.__cron = croniter(cronsting, dt.datetime.now(tzinfo))
+            self.__cron.get_next()  # init next_t
+        else:
+            self.__cron = None
         self.__tzinfo = tzinfo
-        self.__cron.get_next()  # init next_t
 
     @property
-    def next_t(self) -> tuple[bool, dt.datetime]:
+    def next_t(self) -> dt.datetime | None:
         """ Provides the current expiration status and the following schedule entry [always in the future] """
-        _current_t = self.__cron.get_current(dt.datetime)
-        _expired = _current_t <= dt.datetime.now(self.__tzinfo)
-        if _expired:
-            return _expired, self.__cron.get_next(dt.datetime)
-        else:
-            return _expired, _current_t
+        if self.__cron is not None:
+            _current_t = self.__cron.get_current(dt.datetime)
+            if _current_t <= dt.datetime.now(self.__tzinfo):
+                return self.__cron.get_next(dt.datetime)
+            else:
+                return _current_t
 
 
 class BaseListener:
     def __init__(self,
                  listener_id: int,
-                 title: str,
+                 name: str,
                  ):
         """ Base listener init """
-        self.identifier = listener_id
-        self.name = title
+        self.id = listener_id
+        self.name = name
         self.updated = dt.datetime.now()
 
 
@@ -84,7 +87,7 @@ class FileSystemListener(BaseListener, CronSchedule):
 
     Parameters
     ----------
-    title : listener name
+    name : listener name
     cronstring : schedule string in cron syntax
     tzinfo : server timezone
     path : tracked file or folder path
@@ -94,14 +97,14 @@ class FileSystemListener(BaseListener, CronSchedule):
     """
     def __init__(self,
                  listener_id: int,
-                 title: str,
-                 cronstring: str,
+                 name: str,
+                 cronstring: str | None,
                  tzinfo: dt.tzinfo,
                  path: str,
                  mask: str | None = None,
                  **kwargs: typing.Any
                  ):
-        BaseListener.__init__(self, listener_id, title)
+        BaseListener.__init__(self, listener_id, name)
         CronSchedule.__init__(self, cronstring, tzinfo)
         self._state: dict[pathlib.Path, set[str] | dt.datetime | None] = defaultdict(lambda: None)
         self._path = path
@@ -183,7 +186,7 @@ class SQLListener(BaseListener, CronSchedule):
 
     Parameters
     ----------
-    title : listener name
+    name : listener name
     cronstring : schedule string in cron syntax
     tzinfo : server timezone
     connection : SQLAlchemy connection string
@@ -196,31 +199,32 @@ class SQLListener(BaseListener, CronSchedule):
     """
     def __init__(self,
                  listener_id: int,
-                 title: str,
-                 cronstring: str,
+                 name: str,
+                 cronstring: str | None,
                  tzinfo: dt.tzinfo,
                  connection: str,
                  query: str,
                  continual: bool = True,
                  **kwargs: typing.Any
                  ):
-        BaseListener.__init__(self, listener_id, title)
+        BaseListener.__init__(self, listener_id, name)
         CronSchedule.__init__(self, cronstring, tzinfo)
         self.__engine = sa.create_engine(connection, poolclass=sa.NullPool)
-        self.__query = sa.text(query)
-        self.__continual = continual
+        self._query = sa.text(query)
+        self._continual = continual
 
     def inherit(self, other: SQLListener):
         """ Inherit state from other listener """
-        self.updated = other.updated
+        if self._query == other._query:
+            self.updated = other.updated
 
     def check(self) -> tuple[str, ...]:
         # don't set self.updated, if SQL query failed
         _updated = dt.datetime.now()
         with self.__engine.connect() as conn:
-            rows = conn.execute(self.__query, dict(timestamp=self.updated)).all()
+            rows = conn.execute(self._query, dict(timestamp=self.updated)).all()
         content = tuple(f'[{row[0].strftime("%d.%m.%Y %H:%M:%S")}]\n{row[1]}' for row in rows)
-        if not self.__continual:
+        if not self._continual:
             self.updated = _updated
         elif rows:
             self.updated = max(row[0] for row in rows)
