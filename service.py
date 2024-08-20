@@ -186,7 +186,10 @@ class BugSignalService:
     async def check(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
         """ Force check all listeners for updates """
         message = await kwargs['message'].reply_text(Notification.MESSAGE_CHECK_LISTENERS)
+        _ids = set(int(arg) for arg in (context.args or ()) if arg.isdigit())
         for listener in self.__listeners.values():
+            if _ids and listener.id not in _ids:
+                continue
             kwargs['job_queue'].run_once(self.__check_listener,
                                          when=0,
                                          name=f'{JobName.CHECKER}{listener.id}',
