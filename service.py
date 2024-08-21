@@ -702,10 +702,10 @@ class BugSignalService:
             # save listener
             self.__listeners[row.listener_id] = listener
             # refresh jobs
-            if (_next_t := listener.next_t) is not None:
+            if listener.next_t is not None:
                 # schedule new job
                 job = job_queue.run_once(self.__check_listener,
-                                         when=_next_t,
+                                         when=listener.next_t,
                                          data=JobData(row.listener_id),
                                          name=JobName.LISTENER,
                                          job_kwargs=MISFIRE_GRACE)
@@ -730,11 +730,11 @@ class BugSignalService:
         finally:
             # reschedule listener job
             if (context.job.name == JobName.LISTENER
-                and (_next_t := listener.next_t)
+                and listener.next_t is not None
                 and not any(context.job_queue.get_jobs_by_name(JobName.LISTENER))
             ):
                 job = context.job_queue.run_once(self.__check_listener,
-                                                 when=_next_t,
+                                                 when=listener.next_t,
                                                  data=JobData(listener.id),
                                                  name=JobName.LISTENER,
                                                  job_kwargs=MISFIRE_GRACE)

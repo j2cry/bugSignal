@@ -52,22 +52,14 @@ class ListenerFactory:
 class CronSchedule:
     def __init__(self, cronsting: str | None, tzinfo: dt.tzinfo):
         """ Init croniter """
-        if cronsting is not None:
-            self.__cron = croniter(cronsting, dt.datetime.now(tzinfo))
-            self.__cron.get_next()  # init next_t
-        else:
-            self.__cron = None
+        self.__cron = croniter(cronsting) if cronsting is not None else None
         self.__tzinfo = tzinfo
 
     @property
     def next_t(self) -> dt.datetime | None:
         """ Provides the current expiration status and the following schedule entry [always in the future] """
         if self.__cron is not None:
-            _current_t = self.__cron.get_current(dt.datetime)
-            if _current_t <= dt.datetime.now(self.__tzinfo):
-                return self.__cron.get_next(dt.datetime)
-            else:
-                return _current_t
+            return self.__cron.get_next(dt.datetime, dt.datetime.now(self.__tzinfo))
 
 
 class BaseListener:
