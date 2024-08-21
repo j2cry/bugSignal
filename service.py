@@ -6,7 +6,6 @@ import logging
 import os
 import pytz
 import random
-import re
 import signal
 import sqlalchemy.exc as sqlex
 import time
@@ -49,12 +48,14 @@ from menupage import (
     MenuPattern,
 )
 from model import (
-    UserRole,
-    JobName,
     CustomTableRow,
+    JobData,
+    JobName,
+    UserRole,
+    ValidatedContext,
+    MISFIRE_GRACE,
     # UD, CD, BD, BT, CCT, CT,
     BT, CCT,
-    ValidatedContext,
 )
 
 
@@ -192,9 +193,10 @@ class BugSignalService:
                 continue
             kwargs['job_queue'].run_once(self.__check_listener,
                                          when=0,
-                                         name=f'{JobName.CHECKER}{listener.id}',
+                                         data=JobData(listener.id),
+                                         name=JobName.CHECKER,
                                          chat_id=kwargs['chat'].id,
-                                         job_kwargs={'misfire_grace_time': None})
+                                         job_kwargs=MISFIRE_GRACE)
         # await for all forced listeners done
         started = time.monotonic()
         while time.monotonic() - started < self.config['timeout']['common']:
@@ -211,9 +213,8 @@ class BugSignalService:
         """ Get current bugSignal state """
         def _jobformat(job: Job[CCT]):
             """ Return formatted job schedule """
-            found = re.search(r'\d+', job.name or '')
             _args = (
-                self.__listeners.get(int(found.group()), job).name if found else job.name,
+                self.__listeners.get(job.data.listener_id, job).name if isinstance(job.data, JobData) else job.name,
                 job.next_t.replace(microsecond=0) if job.next_t else None
             )
             return Notification.MESSAGE_JOB_STATE % (*_args,)
@@ -536,9 +537,10 @@ class BugSignalService:
                 # schedule shutdown job
                 case {CallbackKey.ACTION: Action.CONFIRM}:
                     self.logger.info(Notification.LOG_SHUTDOWN, kwargs['user'].name, kwargs['user'].id)
-                    # await kwargs['message'].reply_text(Notification.MESSAGE_SHUTDOWN)
                     await kwargs['message'].edit_text(Notification.MESSAGE_SHUTDOWN, reply_markup=None)
-                    kwargs['job_queue'].run_once(self._onclose, when=self.config['timeout']['close'])
+                    kwargs['job_queue'].run_once(self._onclose,
+                                                 when=self.config['timeout']['close'],
+                                                 job_kwargs=MISFIRE_GRACE)
                 # close menu
                 case _:
                     return await self.__menu_commons(update, context)
@@ -654,7 +656,7 @@ class BugSignalService:
         assert (job_queue := context.job_queue) is not None, '[__actualize] job_queue is None'
         # get listeners info from database
         try:
-            listeners = self.db.listeners()
+            listeners = self.db.listeners(active_only=True)
         except:
             _next_t = self.config['timeout']['retryInterval']
             raise
@@ -666,18 +668,16 @@ class BugSignalService:
                 job = job_queue.run_once(self.__actualize,
                                          when=_next_t,
                                          name=JobName.ACTUALIZER,
-                                         job_kwargs={'misfire_grace_time': None})
+                                         job_kwargs=MISFIRE_GRACE)
                 self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, '--', '--', job.next_t)
+        # remove all scheduled listener jobs
+        for job in job_queue.get_jobs_by_name(JobName.LISTENER):
+            job.schedule_removal()
         # refresh listeners
+        __listeners = {**self.__listeners}
+        self.__listeners.clear()
         for row in listeners:
-            current_listener = self.__listeners.pop(row.listener_id, None)
-            jobname = f'{JobName.LISTENER}{row.listener_id}'
-            # remove scheduled listener jobs
-            for job in job_queue.get_jobs_by_name(jobname):
-                job.schedule_removal()
-            # skip inactive
-            if not row.active:
-                continue
+            current_listener = __listeners.get(row.listener_id)
             # create listener
             kwargs = row._asdict()
             try:
@@ -691,22 +691,33 @@ class BugSignalService:
             if isinstance(current_listener, type(listener)):
                 listener.inherit(current_listener)     # type: ignore
                 self.logger.info(Notification.LOG_LISTENER_INHERITED, listener.name, listener.id)
+            # last check for current listener
+            elif current_listener is not None:
+                job = job_queue.run_once(self.__check_listener,
+                                         when=0,
+                                         data=JobData(row.listener_id),
+                                         name=JobName.CHECKER,
+                                         job_kwargs=MISFIRE_GRACE)
+                self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, listener.name, listener.id, job.next_t)
             # save listener
             self.__listeners[row.listener_id] = listener
             # refresh jobs
             if (_next_t := listener.next_t) is not None:
                 # schedule new job
-                job = job_queue.run_once(self.__check_listener, when=_next_t, name=jobname)
+                job = job_queue.run_once(self.__check_listener,
+                                         when=_next_t,
+                                         data=JobData(row.listener_id),
+                                         name=JobName.LISTENER,
+                                         job_kwargs=MISFIRE_GRACE)
                 self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, listener.name, listener.id, job.next_t)
 
     async def __check_listener(self, context: CCT):
         """ Check for listener updates and send notifications """
         assert context.job_queue is not None, '[__check_listener] job_queue is None'
-        assert context.job is not None, '[__check_listener] job is None'
-        assert (found := re.search(r'\d+', context.job.name or '')), \
-            '[__check_listener] job.name has no listener id'
-        assert (listener := self.__listeners.get(int(found.group()))) is not None, \
-            f'[__check_listener] unknown listener {found.group()}'
+        assert context.job is not None and isinstance(context.job.data, JobData), \
+            '[__check_listener] job is None or job.data has incorrect type'
+        assert (listener := self.__listeners.get(context.job.data.listener_id)) is not None, \
+            f'[__check_listener] unknown listener {context.job.data.listener_id}'
         # start checking
         self.logger.debug(Notification.LOG_CHECK_LISTENER, listener.name, listener.id, listener.updated)
         try:
@@ -718,9 +729,15 @@ class BugSignalService:
             raise ListenerCheckError(listener.id, listener.name, context.job.chat_id) from ex
         finally:
             # reschedule listener job
-            _jobname = f'{JobName.LISTENER}{listener.id}'
-            if (_next_t := listener.next_t) and not any(context.job_queue.get_jobs_by_name(_jobname)):
-                job = context.job_queue.run_once(self.__check_listener, when=_next_t, name=_jobname)
+            if (context.job.name == JobName.LISTENER
+                and (_next_t := listener.next_t)
+                and not any(context.job_queue.get_jobs_by_name(JobName.LISTENER))
+            ):
+                job = context.job_queue.run_once(self.__check_listener,
+                                                 when=_next_t,
+                                                 data=JobData(listener.id),
+                                                 name=JobName.LISTENER,
+                                                 job_kwargs=MISFIRE_GRACE)
                 self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, listener.name, listener.id, job.next_t)
         # send messages
         if not messages:

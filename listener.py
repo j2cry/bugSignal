@@ -215,7 +215,7 @@ class SQLListener(BaseListener, CronSchedule):
 
     def inherit(self, other: SQLListener):
         """ Inherit state from other listener """
-        if self._query == other._query:
+        if self._query.compare(other._query):
             self.updated = other.updated
 
     def check(self) -> tuple[str, ...]:

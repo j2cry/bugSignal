@@ -7,6 +7,7 @@ import sqlalchemy.dialects.postgresql as psql
 import typing
 
 from collections import namedtuple
+from dataclasses import dataclass
 from telegram import Chat, User, Message
 from telegram.ext import CallbackContext, ContextTypes, ExtBot, JobQueue
 
@@ -29,12 +30,20 @@ class UserRole(enum.IntFlag):
 
 
 # --------------------------------------------------------------------------------
+# JobQueue data
+@dataclass(frozen=True, slots=True)
+class JobData:
+    listener_id: int
+
 # JobQueue naming
 class JobName(enum.StrEnum):
     ACTUALIZER = enum.auto()
     LISTENER = enum.auto()
     CHECKER = enum.auto()
 
+MISFIRE_GRACE = dict(
+    misfire_grace_time=None
+)
 
 # --------------------------------------------------------------------------------
 # bot context typing
