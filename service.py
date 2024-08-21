@@ -57,6 +57,7 @@ from model import (
     # UD, CD, BD, BT, CCT, CT,
     BT, CCT,
 )
+from __version__ import VERSION
 
 
 def checkvars[S: BugSignalService, T, **KW](
@@ -222,6 +223,7 @@ class BugSignalService:
         _jobs = sorted(kwargs['job_queue'].jobs(), key=lambda j: j.name or '')
         _args = (
             dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            VERSION,
             '\n'.join(map(_jobformat, _jobs)),
             len(self.__listeners),
         )
