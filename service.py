@@ -729,9 +729,12 @@ class BugSignalService:
             raise ListenerCheckError(listener.id, listener.name, context.job.chat_id) from ex
         finally:
             # reschedule listener job
+            SCHEDULED_JOBS = frozenset(j.data.listener_id
+                                       for j in context.job_queue.get_jobs_by_name(JobName.LISTENER)
+                                       if isinstance(j.data, JobData))
             if (context.job.name == JobName.LISTENER
                 and listener.next_t is not None
-                and not any(context.job_queue.get_jobs_by_name(JobName.LISTENER))
+                and listener.id not in SCHEDULED_JOBS
             ):
                 job = context.job_queue.run_once(self.__check_listener,
                                                  when=listener.next_t,
