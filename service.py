@@ -236,6 +236,20 @@ class BugSignalService:
         await self.__actualize(context)
         await self.jobstate(update, context)
 
+    @checkvars
+    @allowed_for(UserRole.MASTER | UserRole.MODERATOR, chat_admin=False)
+    async def say(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Send message to specified chat on behalf of the bot """
+        try:
+            chat_id, *text = context.args or ()      # type: ignore
+        except ValueError:
+            await kwargs['message'].reply_text(Notification.MESSAGE_INCORRECT_ARGS)
+            return
+        try:
+            await context.bot.send_message(chat_id, ' '.join(text))
+        except:
+            await kwargs['message'].reply_text(Notification.MESSAGE_SOMETHING_WRONG)
+
     # --------------------------------------------------------------------------------
     # Common inline menu
     @checkvars
