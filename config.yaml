@@ -1,0 +1,21 @@
+
+logger:
+  filename: logs/bugsignal.log
+  mode: a
+  maxBytes: 5242880
+  backupCount: 3
+  encoding: utf-8
+  delay: False
+  errors: None
+  level: DEBUG
+
+timeout:
+  common: 300
+  start: 2.5
+  close: 5
+  actualizerCron: "5 0 * * *"
+  retryInterval: 15
+  lifetime: 30
+
+timezone: Europe/Moscow
+sqlSchema: bugsignal
