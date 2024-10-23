@@ -610,11 +610,6 @@ class BugSignalService:
     async def _onstart(self, context: CCT):
         """ On start event """
         await self.__actualize(context)
-        # collect developers
-        self.__developers = tuple(
-            chat.chat_id for chat in self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
-            if UserRole.DEVELOPER in UserRole(chat.role)
-        )
 
     async def _onclose(self, context: CCT):
         """ On shutdown event """
@@ -726,6 +721,14 @@ class BugSignalService:
                                          name=JobName.LISTENER,
                                          job_kwargs=MISFIRE_GRACE)
                 self.logger.info(Notification.LOG_JOB_SCHEDULED, job.name, listener.name, listener.id, job.next_t)
+        # refresh developers
+        try:
+            self.__developers = tuple(
+                chat.chat_id for chat in self.db.chats(active_only=True, of_types=ChatType.PRIVATE)
+                if UserRole.DEVELOPER in UserRole(chat.role)
+            )
+        except Exception as ex:
+            self.logger.warning(Notification.ERROR_TRACEBACK, *self.__exception_args(ex))
 
     async def __check_listener(self, context: CCT):
         """ Check for listener updates and send notifications """
