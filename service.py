@@ -70,13 +70,13 @@ def checkvars[S: BugSignalService, T, **KW](
                  *args: KW.args,
                  **kwargs: KW.kwargs
                  ) -> Coroutine[Any, Any, T]:
-        assert (user := update.effective_user) is not None, f'[checkvars] effective_user is None'
-        assert (chat := update.effective_chat) is not None, f'[checkvars] effective_chat is None'
-        assert (message := update.effective_message) is not None, f'[checkvars] effective_message is None'
-        assert (user_data := context.user_data) is not None, f'[checkvars] user_data is None'
-        assert (chat_data := context.chat_data) is not None, f'[checkvars] chat_data is None'
-        assert (bot_data := context.bot_data) is not None, f'[checkvars] bot_data is None'
-        assert (job_queue := context.job_queue) is not None, f'[checkvars] job_queue is None'
+        assert (user := update.effective_user) is not None, '[checkvars] effective_user is None'
+        assert (chat := update.effective_chat) is not None, '[checkvars] effective_chat is None'
+        assert (message := update.effective_message) is not None, '[checkvars] effective_message is None'
+        assert (user_data := context.user_data) is not None, '[checkvars] user_data is None'
+        assert (chat_data := context.chat_data) is not None, '[checkvars] chat_data is None'
+        assert (bot_data := context.bot_data) is not None, '[checkvars] bot_data is None'
+        assert (job_queue := context.job_queue) is not None, '[checkvars] job_queue is None'
         if (query := update.callback_query) is not None:
             callback_data = query.data or ''
         else:
@@ -105,7 +105,9 @@ def allowed_for(roles: UserRole, chat_admin: bool):
     chat_admin : bool
         Flag for allowing Telegram chat administrators to execute the command
     """
-    def _permission_check[S: BugSignalService, T, **KW](method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]):
+    def _permission_check[S: BugSignalService, T, **KW](
+            method: Callable[Concatenate[S, Update, CCT, KW], Coroutine[Any, Any, T]]
+    ):
         async def _empty_handler(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T: ...
         async def _wrapper(self: S, update: Update, context: CCT, *args: KW.args, **kwargs: KW.kwargs) -> T:
             assert (user := update.effective_user) is not None, '[permission_check] effective_user is None'
@@ -146,7 +148,7 @@ class BugSignalService:
         self.__developers: tuple[int, ...] = ()
         try:
             self.timezone = pytz.timezone(self.config['timezone'])
-        except:
+        except Exception:
             self.timezone = pytz.UTC
             self.logger.warning(Notification.LOG_INCORRECT_TIMEZONE, self.config['timezone'])
         self.__actualizer_cron = CronSchedule(self.config['timeout']['actualizerCron'], self.timezone)
@@ -238,8 +240,8 @@ class BugSignalService:
 
     @checkvars
     @allowed_for(UserRole.MASTER | UserRole.MODERATOR, chat_admin=False)
-    async def say(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
-        """ Send message to specified chat on behalf of the bot """
+    async def post(self, update: Update, context: CCT, **kwargs: Unpack[ValidatedContext]):
+        """ Send text message to specified chat on behalf of the bot """
         try:
             chat_id, *text = context.args or ()      # type: ignore
         except ValueError:
@@ -247,8 +249,9 @@ class BugSignalService:
             return
         try:
             await context.bot.send_message(chat_id, ' '.join(text))
-        except:
+        except Exception:
             await kwargs['message'].reply_text(Notification.MESSAGE_SOMETHING_WRONG)
+            raise
 
     # --------------------------------------------------------------------------------
     # Common inline menu
@@ -533,7 +536,7 @@ class BugSignalService:
                                       action=Action.CONFIRM),
                        CustomTableRow(name=f'{Emoji.DISABLED} No',
                                       action=Action.CLOSE),
-                      ),
+                       ),
             )
             chat_data['menupage'] = menupage
             markup = menupage.markup
@@ -574,6 +577,8 @@ class BugSignalService:
         match context.error:
             # drop menu inline
             case MenuError() if isinstance(update, Update) and update.effective_message is not None:
+                if isinstance(context.chat_data, MutableMapping):
+                    context.chat_data.pop('menupage', None)
                 try:
                     await update.effective_message.edit_text(str(context.error), reply_markup=None)
                 except Exception as ex:
@@ -668,7 +673,7 @@ class BugSignalService:
         # get listeners info from database
         try:
             listeners = self.db.listeners(active_only=True)
-        except:
+        except Exception:
             _next_t = self.config['timeout']['retryInterval']
             raise
         else:

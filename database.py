@@ -114,9 +114,10 @@ class Database:
             query = sa.select(
                 LISTENER.name,
                 SUBSCRIPTION.subscription_id,
-                sa.case((SUBSCRIPTION.chat_id == None, chat_id),
-                        else_=SUBSCRIPTION.chat_id
-                        ).label('chat_id'),
+                sa.cast(sa.case((SUBSCRIPTION.chat_id == None, chat_id),
+                                else_=SUBSCRIPTION.chat_id
+                                ).label('chat_id'),
+                        sa.BIGINT),
                 LISTENER.listener_id,
                 SUBSCRIPTION.active
             ).join(SUBSCRIPTION,
@@ -126,7 +127,6 @@ class Database:
             ).where(
                 LISTENER.active == True
             ).order_by(LISTENER.name)
-
             self.__logger.debug(str(query))
             return chat.name, tuple(conn.execute(query).all()) # type: ignore
 
