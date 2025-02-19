@@ -69,6 +69,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('actualize', bot.actualize))
     application.add_handler(CommandHandler('shutdown', bot.shutdown))
     application.add_handler(CommandHandler('menu', bot.main_menu))
+    application.add_handler(CommandHandler('post', bot.post))
     application.add_handler(CallbackQueryHandler(bot.main_menu, MenuPattern.MAIN))
     application.add_handler(CallbackQueryHandler(bot.listeners_menu, MenuPattern.LISTENERS))
     application.add_handler(CallbackQueryHandler(bot.chats_menu, MenuPattern.CHATS))

@@ -103,6 +103,7 @@ class Notification:
                                 '<b>It is impossible to turn it back on without access to the server.</b>')
     MESSAGE_JOB_STATE = '📌 %s @ %s'
     MESSAGE_SELF_STATE = '[%s] Self state (%s):\n%s\nActive listeners: %s'
+    MESSAGE_INCORRECT_ARGS = '🚧 Incorrect command arguments.'
 
     LOG_CHECK_LISTENER = 'Checking for updates in listener %s [%s] from timestamp %s'
     LOG_NO_UPDATES = 'Listener %s [%s] has no updates'

@@ -47,13 +47,13 @@ MISFIRE_GRACE = dict(
 
 # --------------------------------------------------------------------------------
 # bot context typing
-BT = ExtBot[None]
+BT: typing.TypeAlias = ExtBot[None]
 UD = typing.TypedDict('UD', {})
 CD = typing.TypedDict('CD', {
     'menupage': typing.NotRequired['InlineMenuPage'],
 })
 BD = typing.TypedDict('BD', {})
-CCT = CallbackContext[BT, UD, CD, BD]
+CCT: typing.TypeAlias = CallbackContext[BT, UD, CD, BD]
 CT = ContextTypes(CallbackContext, UD, CD, BD)
 
 class ValidatedContext(typing.TypedDict):
